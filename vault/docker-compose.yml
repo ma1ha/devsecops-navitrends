@@ -1,0 +1,26 @@
+services:
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: vault
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8200:8200"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_ADDR: "http://0.0.0.0:8200"
+    command: >
+      vault server -dev
+      -dev-root-token-id="maha"
+      -dev-listen-address="0.0.0.0:8200"
+    volumes:
+      - vault-data:/vault/data
+    networks:
+      - integration-network
+
+volumes:
+  vault-data:
+
+networks:
+  integration-network:
+    external: true

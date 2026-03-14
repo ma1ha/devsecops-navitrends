@@ -1,0 +1,87 @@
+services:
+  mautic-db:
+    image: mariadb:10.11
+    container_name: mautic-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MAUTIC_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MAUTIC_MYSQL_DB}
+      MYSQL_USER:          ${MAUTIC_MYSQL_USER}
+      MYSQL_PASSWORD:      ${MAUTIC_MYSQL_PASSWORD}
+    volumes:
+      - mautic-db-data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - mautic-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MAUTIC_MYSQL_ROOT_PASSWORD}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mautic:
+    image: mautic/mautic:5-apache
+    container_name: mautic-app
+    restart: unless-stopped
+    depends_on:
+      mautic-db:
+        condition: service_healthy
+    ports:
+      - "${MAUTIC_BIND_IP}:${MAUTIC_PORT}:80"
+    environment:
+      DOCKER_MAUTIC_ROLE:        mautic_web
+      MAUTIC_DB_HOST:            mautic-db
+      MAUTIC_DB_PORT:            3306
+      MAUTIC_DB_NAME:            ${MAUTIC_MYSQL_DB}
+      MAUTIC_DB_USER:            ${MAUTIC_MYSQL_USER}
+      MAUTIC_DB_PASSWORD:        ${MAUTIC_MYSQL_PASSWORD}
+      MAUTIC_ADMIN_EMAIL:        ${MAUTIC_ADMIN_EMAIL}
+      MAUTIC_ADMIN_USERNAME:     ${MAUTIC_ADMIN_USERNAME}
+      MAUTIC_ADMIN_PASSWORD:     ${MAUTIC_ADMIN_PASSWORD}
+      MAUTIC_INSTALL_FROM_CLI:   "true"
+      MAUTIC_SITE_URL:           ${MAUTIC_SITE_URL}
+      MAUTIC_MAILER_FROM_NAME:   ${MAUTIC_MAILER_FROM_NAME}
+      MAUTIC_MAILER_FROM_EMAIL:  ${MAUTIC_MAILER_FROM_EMAIL}
+      MAUTIC_MAILER_TRANSPORT:   ${MAUTIC_MAILER_TRANSPORT}
+      MAUTIC_MAILER_SPOOL_TYPE:  ${MAUTIC_MAILER_SPOOL_TYPE}
+      PHP_MEMORY_LIMIT:          ${PHP_MEMORY_LIMIT}
+      PHP_MAX_EXECUTION_TIME:    ${PHP_MAX_EXECUTION_TIME}
+    volumes:
+      - mautic-data:/var/www/html
+      - ./mautic-logs:/var/www/html/var/logs
+    networks:
+      - mautic-network
+      - integration-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mautic-db-data:
+  mautic-data:
+
+networks:
+  mautic-network:
+    driver: bridge
+  integration-network:
+    external: true

@@ -1,0 +1,90 @@
+services:
+  mariadb:
+    image: mariadb:10.6
+    container_name: frappe-mariadb
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    networks:
+      - frappe-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p${FRAPPE_MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: frappe-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - frappe-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frappe:
+    image: frappe/erpnext:14
+    container_name: frappe-erpnext
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${FRAPPE_BIND_IP}:${FRAPPE_PORT}:8000"
+    environment:
+      DB_HOST:          mariadb
+      DB_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
+      REDIS_CACHE:      redis://frappe-redis:6379
+      REDIS_QUEUE:      redis://frappe-redis:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+    networks:
+      - frappe-network
+      - integration-network
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mariadb-data:
+  redis-data:
+  frappe-sites:
+
+networks:
+  frappe-network:
+    driver: bridge
+  integration-network:
+    external: true
