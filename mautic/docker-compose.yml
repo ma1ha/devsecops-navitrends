@@ -29,7 +29,9 @@ services:
         max-file: "3"
 
   mautic:
-    image: mautic/mautic:5-apache
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: mautic-app
     restart: unless-stopped
     depends_on:
