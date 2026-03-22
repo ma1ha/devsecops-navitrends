@@ -1,22 +1,36 @@
 services:
+  vault-init:
+    image: busybox
+    command: chown -R 100:1000 /vault/data
+    volumes:
+      - vault-data:/vault/data
+
   vault:
-    image: hashicorp/vault:1.15
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: vault
     restart: unless-stopped
+    entrypoint: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8200:8200"
+      - "127.0.0.1:8201:8201"
+    cap_drop:
+      - ALL
     cap_add:
       - IPC_LOCK
     environment:
-      VAULT_ADDR: "http://0.0.0.0:8200"
-    command: >
-      vault server -dev
-      -dev-root-token-id="maha"
-      -dev-listen-address="0.0.0.0:8200"
+      VAULT_ADDR: "http://127.0.0.1:8200"
     volumes:
       - vault-data:/vault/data
     networks:
       - integration-network
+    read_only: true
+    tmpfs:
+      - /tmp
 
 volumes:
   vault-data:
