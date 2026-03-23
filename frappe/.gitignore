@@ -1,1 +1,7 @@
 *.log
+security-reports/
+mautic-logs/
+mautic-backup-files/
+*.html
+node_modules/
+*.log

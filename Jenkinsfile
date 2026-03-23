@@ -218,7 +218,7 @@ pipeline {
             steps {
                 script {
                     def images = [
-                        [name: 'n8n',       image: 'n8nio/n8n:1.82.3'],
+                        [name: 'n8n',       image: 'n8nio/n8n:2.11.4'],
                         [name: 'nextcloud', image: 'nextcloud:33-apache'],
                         [name: 'mautic',    image: 'mautic/mautic:5-apache'],
                         [name: 'odoo',      image: 'odoo:18.0'],

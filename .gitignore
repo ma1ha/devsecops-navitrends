@@ -3,3 +3,4 @@ security-reports/
 mautic/mautic-logs/
 mautic/mautic-backup-files/
 *.db
+vault\init-secrets.ps1
