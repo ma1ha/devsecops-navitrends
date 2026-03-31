@@ -4,8 +4,8 @@ services:
     container_name: odoo-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       ${ODOO_POSTGRES_DB}
-      POSTGRES_USER:     ${ODOO_POSTGRES_USER}
+      POSTGRES_DB: ${ODOO_POSTGRES_DB}
+      POSTGRES_USER: ${ODOO_POSTGRES_USER}
       POSTGRES_PASSWORD: ${ODOO_POSTGRES_PASSWORD}
     volumes:
       - db-data:/var/lib/postgresql/data
@@ -36,8 +36,8 @@ services:
     ports:
       - "${ODOO_BIND_IP}:${ODOO_PORT}:8069"
     environment:
-      HOST:     db
-      USER:     ${ODOO_POSTGRES_USER}
+      HOST: db
+      USER: ${ODOO_POSTGRES_USER}
       PASSWORD: ${ODOO_POSTGRES_PASSWORD}
     volumes:
       - odoo-data:/var/lib/odoo
@@ -45,7 +45,7 @@ services:
       - odoo-network
       - integration-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8069/web/health || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8069/web/login')\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
