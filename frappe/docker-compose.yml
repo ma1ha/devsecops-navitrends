@@ -1,90 +1,342 @@
+# ============================================================
+#  ERPNext v15 — Production
+#
+#  BEFORE RUNNING:
+#    1. Load vault secrets into your shell:
+#         . .\vault\get-secrets.ps1 -VAULT_TOKEN "..."
+#
+#    2. Verify secrets are loaded:
+#         echo $env:FRAPPE_MYSQL_ROOT_PASSWORD
+#         echo $env:FRAPPE_ADMIN_PASSWORD
+#
+#    3. Create external network (once ever):
+#         docker network create integration-network
+#
+#    4. Bring up:
+#         docker compose -f .\frappe\docker-compose.yml up -d
+#         docker compose -f .\frappe\docker-compose.yml logs -f frappe-create-site
+# ============================================================
+
+x-frappe-common: &frappe-common
+  image: frappe/erpnext:v15
+  restart: unless-stopped
+  volumes:
+    - frappe-sites:/home/frappe/frappe-bench/sites
+    - frappe-logs:/home/frappe/frappe-bench/logs
+  networks:
+    - frappe-network
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 300
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+x-frappe-env: &frappe-env
+  DB_HOST: frappe-db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis://frappe-redis-cache:6379
+  REDIS_QUEUE: redis://frappe-redis-queue:6379
+  REDIS_SOCKETIO: redis://frappe-redis-queue:6379
+
 services:
-  mariadb:
+
+  # ── Database ──────────────────────────────────────────────
+  frappe-db:
     image: mariadb:10.6
     container_name: frappe-mariadb
     restart: unless-stopped
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
       MYSQL_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
+      MYSQL_ROOT_HOST: "%"
     volumes:
-      - mariadb-data:/var/lib/mysql
+      - frappe-db-data:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --skip-character-set-client-handshake
+      --skip-innodb-read-only-compressed
+      --max_allowed_packet=256M
+      --innodb_buffer_pool_size=512M
     networks:
       - frappe-network
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p${FRAPPE_MYSQL_ROOT_PASSWORD} || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p${FRAPPE_MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Redis Cache ───────────────────────────────────────────
+  frappe-redis-cache:
+    image: redis:7-alpine
+    container_name: frappe-redis-cache
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - frappe-network
+    volumes:
+      - frappe-redis-cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── Redis Queue ───────────────────────────────────────────
+  frappe-redis-queue:
+    image: redis:7-alpine
+    container_name: frappe-redis-queue
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    networks:
+      - frappe-network
+    volumes:
+      - frappe-redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── Init (runs once, writes sentinel, never runs again) ───
+  frappe-create-site:
+    image: frappe/erpnext:v15
+    container_name: frappe-create-site
+    restart: on-failure
+    depends_on:
+      frappe-db:
+        condition: service_healthy
+      frappe-redis-cache:
+        condition: service_healthy
+      frappe-redis-queue:
+        condition: service_healthy
+    environment:
+      <<: *frappe-env
+      FRAPPE_MYSQL_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
+      FRAPPE_ADMIN_PASSWORD: ${FRAPPE_ADMIN_PASSWORD}
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-erpnext.localhost}
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - frappe-network
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+
+        if [ -f /home/frappe/frappe-bench/sites/.site-initialized ]; then
+          echo "=== Already initialised — skipping ==="
+          exit 0
+        fi
+
+        echo "=== [1/6] Writing common_site_config.json ==="
+        mkdir -p /home/frappe/frappe-bench/sites
+
+        cat > /home/frappe/frappe-bench/sites/common_site_config.json << 'CONF'
+        {
+          "db_host": "frappe-db",
+          "db_port": 3306,
+          "redis_cache": "redis://frappe-redis-cache:6379",
+          "redis_queue": "redis://frappe-redis-queue:6379",
+          "redis_socketio": "redis://frappe-redis-queue:6379",
+          "socketio_port": 9000,
+          "webserver_port": 8000,
+          "background_workers": 1,
+          "serve_default_site": 1,
+          "auto_update": 0
+        }
+        CONF
+
+        echo "=== [2/6] Waiting for MariaDB ==="
+        for i in $(seq 1 30); do
+          mysql -h frappe-db -u root -p"$FRAPPE_MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1 && break
+          echo "Attempt $i..."
+          sleep 5
+        done
+
+        echo "=== [3/6] Creating site ==="
+        if [ ! -d /home/frappe/frappe-bench/sites/$FRAPPE_SITE_NAME ]; then
+          bench new-site $FRAPPE_SITE_NAME \
+            --db-host frappe-db \
+            --db-root-password "$FRAPPE_MYSQL_ROOT_PASSWORD" \
+            --admin-password "$FRAPPE_ADMIN_PASSWORD" \
+            --install-app erpnext \
+            --set-default \
+            --mariadb-user-host-login-scope="%"
+        fi
+
+        echo "=== [4/6] Migrate ==="
+        bench --site $FRAPPE_SITE_NAME migrate
+
+        echo "=== [5/6] Enable scheduler ==="
+        bench --site $FRAPPE_SITE_NAME enable-scheduler
+
+        touch /home/frappe/frappe-bench/sites/.site-initialized
+
+        echo "=== DONE ==="
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  # ── Nginx ─────────────────────────────────────────────────
+  frappe:
+    <<: *frappe-common
+    container_name: frappe-app
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-gunicorn:
+        condition: service_healthy
+      frappe-socketio:
+        condition: service_started
+    command: nginx-entrypoint.sh
+    environment:
+      BACKEND: frappe-gunicorn:8000
+      SOCKETIO: frappe-socketio:9000
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME:-erpnext.localhost}
+    ports:
+      - "${FRAPPE_BIND_IP:-127.0.0.1}:${FRAPPE_PORT:-9099}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/method/ping || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 200
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  redis:
-    image: redis:7-alpine
-    container_name: frappe-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis-data:/data
-    networks:
-      - frappe-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 100
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  frappe:
-    image: frappe/erpnext:14
-    container_name: frappe-erpnext
-    restart: unless-stopped
-    depends_on:
-      mariadb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "${FRAPPE_BIND_IP}:${FRAPPE_PORT}:8000"
-    environment:
-      DB_HOST:          mariadb
-      DB_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
-      REDIS_CACHE:      redis://frappe-redis:6379
-      REDIS_QUEUE:      redis://frappe-redis:6379
-    volumes:
-      - frappe-sites:/home/frappe/frappe-bench/sites
     networks:
       - frappe-network
       - integration-network
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 200
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+
+  # ── Gunicorn ──────────────────────────────────────────────
+  frappe-gunicorn:
+    <<: *frappe-common
+    container_name: frappe-gunicorn
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-db:
+        condition: service_healthy
+      frappe-redis-cache:
+        condition: service_healthy
+      frappe-redis-queue:
+        condition: service_healthy
+    command: bench serve --port 8000
+    environment:
+      <<: *frappe-env
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/method/ping || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Workers ───────────────────────────────────────────────
+  frappe-worker-default:
+    <<: *frappe-common
+    container_name: frappe-worker-default
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-redis-queue:
+        condition: service_healthy
+    command: bench worker --queue default
+    environment:
+      <<: *frappe-env
+
+  frappe-worker-short:
+    <<: *frappe-common
+    container_name: frappe-worker-short
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-redis-queue:
+        condition: service_healthy
+    command: bench worker --queue short
+    environment:
+      <<: *frappe-env
+
+  frappe-worker-long:
+    <<: *frappe-common
+    container_name: frappe-worker-long
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-redis-queue:
+        condition: service_healthy
+    command: bench worker --queue long
+    environment:
+      <<: *frappe-env
+
+  # ── Scheduler ─────────────────────────────────────────────
+  frappe-scheduler:
+    <<: *frappe-common
+    container_name: frappe-scheduler
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-redis-queue:
+        condition: service_healthy
+    command: bench schedule
+    environment:
+      <<: *frappe-env
+
+  # ── Socket.IO ─────────────────────────────────────────────
+  frappe-socketio:
+    <<: *frappe-common
+    container_name: frappe-socketio
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-redis-queue:
+        condition: service_healthy
+    command: node /home/frappe/frappe-bench/apps/frappe/socketio.js
+    environment:
+      REDIS_QUEUE: redis://frappe-redis-queue:6379
+      REDIS_SOCKETIO: redis://frappe-redis-queue:6379
 
 volumes:
-  mariadb-data:
-  redis-data:
+  frappe-db-data:
   frappe-sites:
+  frappe-logs:
+  frappe-redis-cache-data:
+  frappe-redis-queue-data:
 
 networks:
   frappe-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
   integration-network:
     external: true

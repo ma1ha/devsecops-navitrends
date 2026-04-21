@@ -31,10 +31,6 @@ $env:NC_POSTGRES_DB       = Get-VaultSecret "next_cloud" "POSTGRES_DB"
 $env:NC_POSTGRES_USER     = Get-VaultSecret "next_cloud" "POSTGRES_USER"
 $env:NC_POSTGRES_PASSWORD = Get-VaultSecret "next_cloud" "POSTGRES_PASSWORD"
 
-# FRAPPE
-
-$env:FRAPPE_MYSQL_ROOT_PASSWORD = Get-VaultSecret "frappe" "MYSQL_ROOT_PASSWORD"
-
 # MAUTIC
 $env:MAUTIC_MYSQL_DB            = Get-VaultSecret "mautic" "MYSQL_DB"
 $env:MAUTIC_MYSQL_USER          = Get-VaultSecret "mautic" "MYSQL_USER"
@@ -43,4 +39,22 @@ $env:MAUTIC_MYSQL_ROOT_PASSWORD = Get-VaultSecret "mautic" "MYSQL_ROOT_PASSWORD"
 $env:MAUTIC_ADMIN_EMAIL         = Get-VaultSecret "mautic" "ADMIN_EMAIL"
 $env:MAUTIC_ADMIN_USERNAME      = Get-VaultSecret "mautic" "ADMIN_USERNAME"
 $env:MAUTIC_ADMIN_PASSWORD      = Get-VaultSecret "mautic" "ADMIN_PASSWORD"
+
+# WAZUH
+$env:WAZUH_MANAGER_IP        = Get-VaultSecret "wazuh" "MANAGER_IP"
+$env:WAZUH_AGENT_NAME        = Get-VaultSecret "wazuh" "AGENT_NAME"
+$env:WAZUH_API_USER          = Get-VaultSecret "wazuh" "API_USER"
+$env:WAZUH_API_PASS          = Get-VaultSecret "wazuh" "API_PASS"
+$env:WAZUH_REGISTRATION_PASS = Get-VaultSecret "wazuh" "REGISTRATION_PASS"
+$env:WAZUH_DASHBOARD_USER    = Get-VaultSecret "wazuh" "DASHBOARD_USER"
+$env:WAZUH_DASHBOARD_PASS    = Get-VaultSecret "wazuh" "DASHBOARD_PASS"
+$env:WAZUH_INDEXER_PASS      = Get-VaultSecret "wazuh" "INDEXER_PASS"
+$env:WAZUH_KIBANA_PASS       = Get-VaultSecret "wazuh" "KIBANA_PASS"
+
+
+#FRAPPE
+$env:FRAPPE_MYSQL_ROOT_PASSWORD = Get-VaultSecret "frappe" "FRAPPE_MYSQL_ROOT_PASSWORD"
+$env:FRAPPE_SITE_NAME           = Get-VaultSecret "frappe" "FRAPPE_SITE_NAME"
+$env:FRAPPE_ADMIN_PASSWORD      = Get-VaultSecret "frappe" "FRAPPE_ADMIN_PASSWORD"
+$env:FRAPPE_ENCRYPTION_KEY      = Get-VaultSecret "frappe" "FRAPPE_ENCRYPTION_KEY"
 Write-Host "All secrets loaded into environment!"

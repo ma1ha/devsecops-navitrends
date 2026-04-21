@@ -1,22 +1,62 @@
+# ============================================================
+#  Frappe / ERPNext v15
+#
+#  .env must contain:
+#    FRAPPE_BIND_IP=127.0.0.1
+#    FRAPPE_PORT=9099
+#    FRAPPE_SITE_NAME=erpnext.localhost
+#    FRAPPE_MYSQL_ROOT_PASSWORD=...
+#    FRAPPE_ADMIN_PASSWORD=...
+#    FRAPPE_ENCRYPTION_KEY=...
+# ============================================================
+
+x-frappe-common: &frappe-common
+  image: frappe/erpnext:v15
+  restart: unless-stopped
+  volumes:
+    - frappe-sites:/home/frappe/frappe-bench/sites
+    - frappe-logs:/home/frappe/frappe-bench/logs
+  networks:
+    - frappe-network
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 200
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-frappe-env: &frappe-env
+  DB_HOST: frappe-db
+  DB_PORT: "3306"
+  REDIS_CACHE: redis://frappe-redis-cache:6379
+  REDIS_QUEUE: redis://frappe-redis-queue:6379
+
 services:
-  nextcloud-db:
-    image: postgres:15.10
-    container_name: nextcloud-postgres
+
+  # ── Database ──────────────────────────────────────────────
+  frappe-db:
+    image: mariadb:10.6
+    container_name: frappe-mariadb
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: ${NC_POSTGRES_PASSWORD}
-      POSTGRES_DB:       ${NC_POSTGRES_DB}
-      POSTGRES_USER:     ${NC_POSTGRES_USER}
+      MYSQL_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
     volumes:
-      - nextcloud-db-data:/var/lib/postgresql/data
+      - frappe-db-data:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --skip-character-set-client-handshake
+      --skip-innodb-read-only-compressed
     networks:
-      - nextcloud-network
+      - frappe-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${NC_POSTGRES_USER} -d ${NC_POSTGRES_DB}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${FRAPPE_MYSQL_ROOT_PASSWORD} --silent"]
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 30s
     security_opt:
       - no-new-privileges:true
     pids_limit: 200
@@ -26,46 +66,214 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  nextcloud:
-    image: nextcloud:33-apache
-    container_name: nextcloud-app
+  # ── Redis ─────────────────────────────────────────────────
+  frappe-redis-cache:
+    image: redis:7-alpine
+    container_name: frappe-redis-cache
     restart: unless-stopped
-    depends_on:
-      nextcloud-db:
-        condition: service_healthy
-    ports:
-      - "${NEXTCLOUD_BIND_IP}:${NEXTCLOUD_PORT}:80"
-    environment:
-      POSTGRES_HOST:     nextcloud-db
-      POSTGRES_DB:       ${NC_POSTGRES_DB}
-      POSTGRES_USER:     ${NC_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${NC_POSTGRES_PASSWORD}
-    volumes:
-      - nextcloud-data:/var/www/html
     networks:
-      - nextcloud-network
-      - integration-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      - frappe-network
+    volumes:
+      - frappe-redis-cache-data:/data
     security_opt:
       - no-new-privileges:true
-    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  frappe-redis-queue:
+    image: redis:7-alpine
+    container_name: frappe-redis-queue
+    restart: unless-stopped
+    networks:
+      - frappe-network
+    volumes:
+      - frappe-redis-queue-data:/data
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── One-time site initialiser ──────────────────────────────
+  # Writes a sentinel file on success so it never runs again.
+  frappe-create-site:
+    image: frappe/erpnext:v15
+    container_name: frappe-create-site
+    restart: "no"
+    depends_on:
+      frappe-db:
+        condition: service_healthy
+      frappe-redis-cache:
+        condition: service_started
+      frappe-redis-queue:
+        condition: service_started
+    environment:
+      DB_HOST: frappe-db
+      DB_PORT: "3306"
+      REDIS_CACHE: redis://frappe-redis-cache:6379
+      REDIS_QUEUE: redis://frappe-redis-queue:6379
+      FRAPPE_MYSQL_ROOT_PASSWORD: ${FRAPPE_MYSQL_ROOT_PASSWORD}
+      FRAPPE_ADMIN_PASSWORD: ${FRAPPE_ADMIN_PASSWORD}
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME}
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    networks:
+      - frappe-network
+    command: >
+      bash -c '
+        set -e
+
+        SENTINEL="/home/frappe/frappe-bench/sites/.site-initialized"
+
+        if [ -f "$$SENTINEL" ]; then
+          echo "=== Sentinel found — already initialised. Skipping. ==="
+          exit 0
+        fi
+
+        echo "=== First-time initialisation for site: $$FRAPPE_SITE_NAME ==="
+
+        if [ ! -d "/home/frappe/frappe-bench/sites/$$FRAPPE_SITE_NAME" ]; then
+          echo "→ Creating new site..."
+          bench new-site "$$FRAPPE_SITE_NAME" \
+            --db-root-password  "$$FRAPPE_MYSQL_ROOT_PASSWORD" \
+            --admin-password    "$$FRAPPE_ADMIN_PASSWORD" \
+            --install-app       erpnext \
+            --set-default \
+            --mariadb-user-host-login-scope="%"
+        else
+          echo "→ Site directory exists, skipping bench new-site"
+        fi
+
+        echo "→ Running migrate..."
+        bench --site "$$FRAPPE_SITE_NAME" migrate
+
+        echo "→ Building frontend assets (runs once)..."
+        bench build --app frappe
+        bench build --app erpnext
+
+        echo "→ Setting default site..."
+        bench use "$$FRAPPE_SITE_NAME"
+
+        echo "→ Writing sentinel..."
+        touch "$$SENTINEL"
+
+        echo "=== INITIALISATION COMPLETE ==="
+      '
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ── Web / Nginx proxy ─────────────────────────────────────
+  frappe:
+    <<: *frappe-common
+    container_name: frappe-web
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-gunicorn:
+        condition: service_started
+      frappe-socketio:
+        condition: service_started
+    command: nginx-entrypoint.sh
+    environment:
+      BACKEND: frappe-gunicorn:8000
+      SOCKETIO: frappe-socketio:9000
+      FRAPPE_SITE_NAME_HEADER: ${FRAPPE_SITE_NAME}
+    ports:
+      - "${FRAPPE_BIND_IP:-127.0.0.1}:${FRAPPE_PORT:-9099}:8080"
+    networks:
+      - frappe-network
+      - integration-network
+
+  # ── Gunicorn ──────────────────────────────────────────────
+  frappe-gunicorn:
+    <<: *frappe-common
+    container_name: frappe-gunicorn
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+      frappe-db:
+        condition: service_healthy
+      frappe-redis-cache:
+        condition: service_started
+      frappe-redis-queue:
+        condition: service_started
+    command: bench serve --port 8000
+    environment:
+      <<: *frappe-env
+
+  # ── Workers ───────────────────────────────────────────────
+  frappe-worker-default:
+    <<: *frappe-common
+    container_name: frappe-worker-default
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+    command: bench worker --queue default
+    environment:
+      <<: *frappe-env
+
+  frappe-worker-short:
+    <<: *frappe-common
+    container_name: frappe-worker-short
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+    command: bench worker --queue short
+    environment:
+      <<: *frappe-env
+
+  frappe-worker-long:
+    <<: *frappe-common
+    container_name: frappe-worker-long
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+    command: bench worker --queue long
+    environment:
+      <<: *frappe-env
+
+  # ── Scheduler ─────────────────────────────────────────────
+  frappe-scheduler:
+    <<: *frappe-common
+    container_name: frappe-scheduler
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+    command: bench schedule
+    environment:
+      <<: *frappe-env
+
+  # ── Socket.IO ─────────────────────────────────────────────
+  frappe-socketio:
+    <<: *frappe-common
+    container_name: frappe-socketio
+    depends_on:
+      frappe-create-site:
+        condition: service_completed_successfully
+    command: node /home/frappe/frappe-bench/apps/frappe/socketio.js
+    environment:
+      REDIS_QUEUE: redis://frappe-redis-queue:6379
 
 volumes:
-  nextcloud-db-data:
-  nextcloud-data:
+  frappe-db-data:
+  frappe-sites:
+  frappe-logs:
+  frappe-redis-cache-data:
+  frappe-redis-queue-data:
 
 networks:
-  nextcloud-network:
+  frappe-network:
     driver: bridge
   integration-network:
     external: true

@@ -1,0 +1,65 @@
+services:
+  wazuh-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        WAZUH_VERSION: "4.14.4"
+    container_name: navitrends-wazuh-agent
+    hostname: navitrends-wazuh-agent
+    restart: unless-stopped
+    env_file: .env
+ 
+    privileged: true
+ 
+    volumes:
+      # Docker socket — Docker event monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+ 
+      # Container logs — all services
+      - /var/lib/docker/containers:/var/log/containers:ro
+ 
+      # Odoo
+      - odoo_odoo-data:/volumes/odoo/data:ro
+ 
+      # n8n
+      - n8n_n8n-data:/volumes/n8n/data:ro
+ 
+      # Nextcloud
+      - nextcloud_nextcloud-data:/volumes/nextcloud/data:ro
+ 
+      # Mautic
+      - mautic_mautic-data:/volumes/mautic/data:ro
+      - mautic_mautic-logs:/volumes/mautic/logs:ro
+ 
+      # Frappe/ERPNext
+      - frappe_frappe-sites:/volumes/frappe/sites:ro
+ 
+     
+      - vault_vault-data:/volumes/vault/data:ro
+ 
+    networks:
+      - integration-network
+      - single-node_default  # to reach wazuh.manager at 172.27.0.3
+ 
+volumes:
+  odoo_odoo-data:
+    external: true
+  n8n_n8n-data:
+    external: true
+  nextcloud_nextcloud-data:
+    external: true
+  mautic_mautic-data:
+    external: true
+  mautic_mautic-logs:
+    external: true
+  frappe_frappe-sites:
+    external: true
+  vault_vault-data:
+    external: true
+ 
+networks:
+  integration-network:
+    external: true
+  single-node_default:
+    external: true
