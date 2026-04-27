@@ -30,6 +30,7 @@ services:
     image: odoo:18.0
     container_name: odoo-app
     restart: unless-stopped
+    command: odoo -i base -d odoo_prod
     depends_on:
       db:
         condition: service_healthy
