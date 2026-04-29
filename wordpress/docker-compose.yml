@@ -36,6 +36,12 @@ services:
         @ini_set('session.cookie_httponly', true);
         @ini_set('session.cookie_secure', true);
         @ini_set('session.use_strict_mode', true);
+    healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:80"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+        start_period: 60s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -82,7 +88,6 @@ services:
     mem_limit: 128m
     cpus: "0.5"
 
-  # ── MariaDB ────────────────────────────────────────────────────────────────
   wordpress-db:
     image: mariadb:11.3
     container_name: wordpress-db
