@@ -1,0 +1,140 @@
+services:
+
+  wordpress:
+    image: wordpress:6.5-fpm-alpine
+    container_name: wordpress
+    restart: unless-stopped
+    depends_on:
+      wordpress-db:
+        condition: service_healthy
+    networks:
+      - wordpress_internal
+      - proxy
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+    environment:
+      WORDPRESS_DB_HOST:          wordpress-db:3306
+      WORDPRESS_DB_NAME:          ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER:          ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD:      ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX:     ${WORDPRESS_TABLE_PREFIX}
+      WORDPRESS_AUTH_KEY:         ${WORDPRESS_AUTH_KEY}
+      WORDPRESS_SECURE_AUTH_KEY:  ${WORDPRESS_SECURE_AUTH_KEY}
+      WORDPRESS_LOGGED_IN_KEY:    ${WORDPRESS_LOGGED_IN_KEY}
+      WORDPRESS_NONCE_KEY:        ${WORDPRESS_NONCE_KEY}
+      WORDPRESS_AUTH_SALT:        ${WORDPRESS_AUTH_SALT}
+      WORDPRESS_SECURE_AUTH_SALT: ${WORDPRESS_SECURE_AUTH_SALT}
+      WORDPRESS_LOGGED_IN_SALT:   ${WORDPRESS_LOGGED_IN_SALT}
+      WORDPRESS_NONCE_SALT:       ${WORDPRESS_NONCE_SALT}
+      WORDPRESS_DEBUG: "false"
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISALLOW_FILE_EDIT', true);
+        define('DISALLOW_FILE_MODS', true);
+        define('FORCE_SSL_ADMIN', true);
+        define('WP_AUTO_UPDATE_CORE', 'minor');
+        @ini_set('session.cookie_httponly', true);
+        @ini_set('session.cookie_secure', true);
+        @ini_set('session.use_strict_mode', true);
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
+      - FSETID
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    mem_limit: 512m
+    cpus: "1.0"
+
+  wordpress-nginx:
+    image: nginx:1.27-alpine
+    container_name: wordpress-nginx
+    restart: unless-stopped
+    depends_on:
+      - wordpress
+    networks:
+      - wordpress_internal
+      - proxy
+    ports:
+      - "${WORDPRESS_BIND_IP}:${WORDPRESS_PORT}:80"
+    volumes:
+      - wordpress_data:/var/www/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
+      - FSETID
+    mem_limit: 128m
+    cpus: "0.5"
+
+  # ── MariaDB ────────────────────────────────────────────────────────────────
+  wordpress-db:
+    image: mariadb:11.3
+    container_name: wordpress-db
+    restart: unless-stopped
+    networks:
+      - wordpress_internal
+    volumes:
+      - wordpress_db_data:/var/lib/mysql
+    command:
+      - --local-infile=0
+      - --symbolic-links=0
+      - --skip-show-database
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --slow-query-log=1
+      - --long-query-time=2
+      - --max-allowed-packet=64M
+      - --innodb-file-per-table=1
+    environment:
+      MYSQL_DATABASE:      ${WORDPRESS_DB_NAME}
+      MYSQL_USER:          ${WORDPRESS_DB_USER}
+      MYSQL_PASSWORD:      ${WORDPRESS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${WORDPRESS_DB_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    mem_limit: 512m
+    cpus: "1.0"
+
+volumes:
+  wordpress_data:
+    name: wordpress_data
+  wordpress_db_data:
+    name: wordpress_db_data
+
+networks:
+  wordpress_internal:
+    name: wordpress_internal
+    internal: true
+    driver: bridge
+  proxy:
+    external: true

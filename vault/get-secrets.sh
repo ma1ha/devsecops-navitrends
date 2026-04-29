@@ -61,14 +61,20 @@ export WAZUH_DASHBOARD_USER=$(get_secret "wazuh" "DASHBOARD_USER")
 export WAZUH_DASHBOARD_PASS=$(get_secret "wazuh" "DASHBOARD_PASS")
 export WAZUH_INDEXER_PASS=$(get_secret "wazuh" "INDEXER_PASS")
 export WAZUH_KIBANA_PASS=$(get_secret "wazuh" "KIBANA_PASS")
-
+#WORDPRESS
+export WORDPRESS_DB_NAME=$(get_secret "wordpress" "MYSQL_DATABASE")
+export WORDPRESS_DB_USER=$(get_secret "wordpress" "MYSQL_USER")
+export WORDPRESS_DB_PASSWORD=$(get_secret "wordpress" "MYSQL_PASSWORD")
+export WORDPRESS_DB_ROOT_PASSWORD=$(get_secret "wordpress" "MYSQL_ROOT_PASSWORD")
+export WORDPRESS_TABLE_PREFIX=$(get_secret "wordpress" "TABLE_PREFIX")
+export WORDPRESS_AUTH_KEY=$(get_secret "wordpress" "AUTH_KEY")
+export WORDPRESS_SECURE_AUTH_KEY=$(get_secret "wordpress" "SECURE_AUTH_KEY")
+export WORDPRESS_LOGGED_IN_KEY=$(get_secret "wordpress" "LOGGED_IN_KEY")
+export WORDPRESS_NONCE_KEY=$(get_secret "wordpress" "NONCE_KEY")
+export WORDPRESS_AUTH_SALT=$(get_secret "wordpress" "AUTH_SALT")
+export WORDPRESS_SECURE_AUTH_SALT=$(get_secret "wordpress" "SECURE_AUTH_SALT")
+export WORDPRESS_LOGGED_IN_SALT=$(get_secret "wordpress" "LOGGED_IN_SALT")
+export WORDPRESS_NONCE_SALT=$(get_secret "wordpress" "NONCE_SALT")
 echo ""
 echo " All secrets loaded into environment!"
 echo ""
-echo " Verifying loaded secrets:"
-echo "  ODOO_POSTGRES_DB        = $ODOO_POSTGRES_DB"
-echo "  N8N_POSTGRES_DB         = $N8N_POSTGRES_DB"
-echo "  NC_POSTGRES_DB          = $NC_POSTGRES_DB"
-echo "  MAUTIC_MYSQL_DB         = $MAUTIC_MYSQL_DB"
-echo "  FRAPPE_ADMIN_PASSWORD   = $FRAPPE_ADMIN_PASSWORD"
-echo "  WAZUH_MANAGER_IP        = $WAZUH_MANAGER_IP"
