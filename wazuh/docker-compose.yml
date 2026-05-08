@@ -1,0 +1,169 @@
+services:
+
+  # ── Wazuh Indexer (OpenSearch) ───────────────────────────
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:4.7.5
+    container_name: wazuh-indexer
+    hostname: wazuh.indexer
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      OPENSEARCH_JAVA_HOME: /usr/share/wazuh-indexer/jdk
+      JAVA_HOME: /usr/share/wazuh-indexer/jdk
+      INDEXER_USERNAME: ${WAZUH_DASHBOARD_USER}
+      INDEXER_PASSWORD: ${WAZUH_INDEXER_PASS}
+    volumes:
+      - ./certs/root-ca.pem:/usr/share/wazuh-indexer/certs/root-ca.pem:ro
+      - ./certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/certs/indexer-key.pem:ro
+      - ./certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/certs/indexer.pem:ro
+      - ./certs/admin.pem:/usr/share/wazuh-indexer/certs/admin.pem:ro
+      - ./certs/admin-key.pem:/usr/share/wazuh-indexer/certs/admin-key.pem:ro
+      - ./entrypoint-fixed.sh:/entrypoint.sh:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - wazuh-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+        test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9200' || exit 1"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+        start_period: 60s
+
+  # ── Wazuh Manager ────────────────────────────────────────
+  wazuh.manager:
+    image: wazuh/wazuh-manager:4.7.5
+    container_name: wazuh-manager
+    hostname: wazuh.manager
+    restart: unless-stopped
+    ports:
+      - "1514:1514/udp"
+      - "1514:1514/tcp"
+      - "1515:1515"
+      - "1516:1516"
+      - "514:514/udp"
+      - "514:514/tcp"
+      - "55000:55000"
+    environment:
+      INDEXER_URL: https://wazuh.indexer:9200
+      INDEXER_USERNAME: ${WAZUH_DASHBOARD_USER}
+      INDEXER_PASSWORD: ${WAZUH_INDEXER_PASS}
+      FILEBEAT_SSL_VERIFICATION_MODE: full
+      SSL_CERTIFICATE_AUTHORITIES: /etc/ssl/root-ca.pem
+      SSL_CERTIFICATE: /etc/ssl/filebeat.pem
+      SSL_KEY: /etc/ssl/filebeat-key.pem
+      API_USERNAME: ${WAZUH_API_USER}
+      API_PASSWORD: ${WAZUH_API_PASS}
+    volumes:
+      - wazuh-manager-api-config:/var/ossec/api/configuration
+      - wazuh-manager-etc:/var/ossec/etc
+      - wazuh-manager-logs:/var/ossec/logs
+      - wazuh-manager-queue:/var/ossec/queue
+      - wazuh-manager-var-multigroups:/var/ossec/var/multigroups
+      - wazuh-manager-integrations:/var/ossec/integrations
+      - wazuh-manager-active-response:/var/ossec/active-response/bin
+      - wazuh-manager-agentless:/var/ossec/agentless
+      - wazuh-manager-wodles:/var/ossec/wodles
+      - wazuh-filebeat-etc:/etc/filebeat
+      - wazuh-filebeat-var:/var/lib/filebeat
+      - ./certs/root-ca-manager.pem:/etc/ssl/root-ca.pem:ro
+      - ./certs/wazuh.manager.pem:/etc/ssl/filebeat.pem:ro
+      - ./certs/wazuh.manager-key.pem:/etc/ssl/filebeat-key.pem:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/maha/devsecops-navitrends:/monitored/devsecops:ro
+      - ./filebeat.yml:/etc/filebeat/filebeat.yml:ro
+    depends_on:
+      wazuh.indexer:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - wazuh-network
+      - integration-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/55000' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ── Wazuh Dashboard ──────────────────────────────────────
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:4.7.5
+    container_name: wazuh-dashboard
+    hostname: wazuh.dashboard
+    restart: unless-stopped
+    ports:
+      - "443:5601"
+    environment:
+      INDEXER_USERNAME: ${WAZUH_DASHBOARD_USER}
+      INDEXER_PASSWORD: ${WAZUH_INDEXER_PASS}
+      WAZUH_API_URL: https://wazuh.manager
+      DASHBOARD_USERNAME: ${WAZUH_DASHBOARD_USER}
+      DASHBOARD_PASSWORD: ${WAZUH_DASHBOARD_PASS}
+      API_USERNAME: ${WAZUH_API_USER}
+      API_PASSWORD: ${WAZUH_API_PASS}
+    volumes:
+      - ./certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem:ro
+      - ./certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem:ro
+      - ./certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem:ro
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    depends_on:
+      wazuh.manager:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - wazuh-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+# ── Networks ─────────────────────────────────────────────
+networks:
+  wazuh-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.27.0.0/24
+  integration-network:
+    external: true
+
+# ── Volumes ──────────────────────────────────────────────
+volumes:
+  wazuh-indexer-data:
+  wazuh-manager-api-config:
+  wazuh-manager-etc:
+  wazuh-manager-logs:
+  wazuh-manager-queue:
+  wazuh-manager-var-multigroups:
+  wazuh-manager-integrations:
+  wazuh-manager-active-response:
+  wazuh-manager-agentless:
+  wazuh-manager-wodles:
+  wazuh-filebeat-etc:
+  wazuh-filebeat-var:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:

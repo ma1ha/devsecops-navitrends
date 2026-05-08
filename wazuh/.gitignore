@@ -1,0 +1,6 @@
+certs/
+.env
+*.pem
+*.key
+wazuh-certs-tool.sh
+wazuh-certificates/

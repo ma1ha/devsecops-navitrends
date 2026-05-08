@@ -31,7 +31,7 @@ services:
       WORDPRESS_CONFIG_EXTRA: |
         define('DISALLOW_FILE_EDIT', true);
         define('DISALLOW_FILE_MODS', true);
-        define('FORCE_SSL_ADMIN', true);
+        # define('FORCE_SSL_ADMIN', true);
         define('WP_AUTO_UPDATE_CORE', 'minor');
         @ini_set('session.cookie_httponly', true);
         @ini_set('session.cookie_secure', true);
@@ -81,10 +81,13 @@ services:
       - NET_BIND_SERVICE
       - CHOWN
       - SETUID
-      - SETGID
+      - NET_BIND_SERVICE
+      - SETGID      
       - DAC_OVERRIDE
       - FOWNER
       - FSETID
+      
+      
     mem_limit: 128m
     cpus: "0.5"
 

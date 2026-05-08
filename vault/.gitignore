@@ -1,2 +1,3 @@
 init-secrets.ps1
 get-secrets.ps1
+init-secrets.sh
