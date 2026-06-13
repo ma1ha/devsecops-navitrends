@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+    echo "[1/6] Waiting for Vault secrets..."
+    until [ -s /vault/secrets/wordpress.env ]; do
+      echo "  /vault/secrets/wordpress.env not ready, sleeping 2s..."
+      sleep 2
+    done
+    echo "  Vault secrets ready."
+    echo "[2/6] Sourcing Vault secrets..."
+    source /vault/secrets/wordpress.env
+    echo "[3/6] Enabling Apache modules..."
+    a2enmod headers rewrite
+    echo "[4/6] Deploying server-level security config..."
+    cp /etc/wordpress-config/security.conf /etc/apache2/conf-available/security.conf
+    a2enconf security
+    echo "[5/6] Deploying VirtualHost config..."
+    cp /etc/wordpress-config/wordpress.conf /etc/apache2/sites-available/wordpress.conf
+    a2dissite 000-default || true
+    a2ensite wordpress
+    echo "[6/6] Deploying php.ini overrides..."
+    cp /etc/wordpress-config/php.ini /usr/local/etc/php/conf.d/wordpress-security.ini
+    echo "Validating Apache config..."
+    apache2ctl configtest
+    echo "All good - starting WordPress..."
+    exec docker-entrypoint.sh apache2-foreground
+
+  php.ini: |
+    upload_max_filesize = 64M
+    post_max_size = 64M
+    max_execution_time = 120
+    memory_limit = 256M
+    expose_php = Off
+    display_errors = Off
+    display_startup_errors = Off
+    log_errors = On
+    allow_url_fopen = Off
+    allow_url_include = Off
+    disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,parse_ini_file,show_source,phpinfo
+    session.cookie_httponly = 1
+    session.cookie_secure = 1
+    session.use_strict_mode = 1
+    session.cookie_samesite = Strict
+
+  security.conf: |
+    ServerTokens Prod
+    ServerSignature Off
+    TraceEnable Off
+
+  wordpress.conf: |
+    <VirtualHost *:80>
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/html
+        Header always set X-Frame-Options "SAMEORIGIN"
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set Referrer-Policy "strict-origin-when-cross-origin"
+        Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        Header always set Cross-Origin-Opener-Policy "same-origin"
+        Header always set Cross-Origin-Resource-Policy "same-origin"
+        Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'self';"
+        <FilesMatch "(\.git|\.env|\.htaccess|\.htpasswd|wp-config\.php)$">
+            Require all denied
+        </FilesMatch>
+        <LocationMatch "^/wp-admin/includes/">
+            Require all denied
+        </LocationMatch>
+        <LocationMatch "^/wp-includes/[^/]+\.php$">
+            Require all denied
+        </LocationMatch>
+        <Location "/xmlrpc.php">
+            Require all denied
+        </Location>
+        <Location "/wp-cron.php">
+            Require all denied
+        </Location>
+        <Directory /var/www/html>
+            Options -Indexes +FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+    </VirtualHost>

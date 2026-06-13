@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odoo
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: odoo
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.odoo.replicas }}
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: odoo
+  template:
+    metadata:
+      labels:
+        app: odoo
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath }}
+        vault.hashicorp.com/agent-inject-file-config: {{ .Values.vault.secretFile }}
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{ "{{" }}- with secret "secret/data/odoo" -{{ "}}" }}
+          [options]
+          db_host = odoo-postgres
+          db_port = 5432
+          db_name = {{ "{{" }} .Data.data.POSTGRES_DB {{ "}}" }}
+          db_user = {{ "{{" }} .Data.data.POSTGRES_USER {{ "}}" }}
+          db_password = {{ "{{" }} .Data.data.POSTGRES_PASSWORD {{ "}}" }}
+          addons_path = /usr/lib/python3/dist-packages/odoo/addons,/var/lib/odoo/addons/18.0,/mnt/extra-addons
+          data_dir = /var/lib/odoo
+          {{ "{{" }}- end {{ "}}" }}
+    spec:
+      restartPolicy: Always
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: false
+        fsGroup: 0
+      containers:
+        - name: odoo
+          image: {{ .Values.odoo.image.repository }}:{{ .Values.odoo.image.tag }}
+          imagePullPolicy: {{ .Values.odoo.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent to inject config file..."
+                sleep 2
+              done
+              exec odoo --config /vault/secrets/config \
+                -i base,web,mail,account,account_accountant,sale_management,\
+              purchase,stock,mrp,project,crm,hr,hr_payroll,hr_expense,\
+              hr_holidays,fleet,maintenance,helpdesk,timesheet,\
+              website,ecommerce,point_of_sale,inventory \
+                -d odoo_prod
+          ports:
+            - containerPort: 8069
+              name: http
+          startupProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.odoo.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.odoo.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.odoo.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.odoo.startupProbe.failureThreshold }}
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+            initialDelaySeconds: {{ .Values.odoo.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.odoo.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.odoo.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.odoo.readinessProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+            initialDelaySeconds: {{ .Values.odoo.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.odoo.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.odoo.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.odoo.livenessProbe.failureThreshold }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: {{ .Values.odoo.resources.requests.memory | quote }}
+              cpu: {{ .Values.odoo.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.odoo.resources.limits.memory | quote }}
+              cpu: {{ .Values.odoo.resources.limits.cpu | quote }}
+          volumeMounts:
+            - name: odoo-data
+              mountPath: /var/lib/odoo
+      volumes:
+        - name: odoo-data
+          persistentVolumeClaim:
+            claimName: odoo-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odoo
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: odoo
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: ClusterIP
+  selector:
+    app: odoo
+  ports:
+    - name: http
+      port: 8069
+      targetPort: 8069
+      protocol: TCP

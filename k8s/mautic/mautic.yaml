@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mautic
+  namespace: mautic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mautic
+  template:
+    metadata:
+      labels:
+        app: mautic
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "mautic"
+        vault.hashicorp.com/agent-inject-secret-config: "secret/data/mautic"
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/mautic" -}}
+          export MAUTIC_DB_NAME="{{ .Data.data.MYSQL_DB }}"
+          export MAUTIC_DB_USER="{{ .Data.data.MYSQL_USER }}"
+          export MAUTIC_DB_PASSWORD="{{ .Data.data.MYSQL_PASSWORD }}"
+          export MAUTIC_ADMIN_EMAIL="{{ .Data.data.ADMIN_EMAIL }}"
+          export MAUTIC_ADMIN_USERNAME="{{ .Data.data.ADMIN_USERNAME }}"
+          export MAUTIC_ADMIN_PASSWORD="{{ .Data.data.ADMIN_PASSWORD }}"
+          {{- end }}
+    spec:
+      serviceAccountName: mautic
+      containers:
+        - name: mautic
+          image: mautic/mautic:5-apache
+          env:
+            - name: DOCKER_MAUTIC_ROLE
+              value: "mautic_web"
+            - name: MAUTIC_DB_HOST
+              value: "mautic-mariadb"
+            - name: MAUTIC_DB_PORT
+              value: "3306"
+            - name: MAUTIC_INSTALL_FROM_CLI
+              value: "true"
+            - name: MAUTIC_SITE_URL
+              value: "https://mautic.navitrends-maha.duckdns.org"
+            - name: MAUTIC_MAILER_FROM_NAME
+              value: "Mautic"
+            - name: MAUTIC_MAILER_FROM_EMAIL
+              value: "noreply@navitrends.com"
+            - name: MAUTIC_MAILER_TRANSPORT
+              value: "mail"
+            - name: MAUTIC_MAILER_SPOOL_TYPE
+              value: "memory"
+            - name: PHP_MEMORY_LIMIT
+              value: "512M"
+            - name: PHP_MAX_EXECUTION_TIME
+              value: "300"
+            - name: FLAVOUR
+              value: "apache"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              source /vault/secrets/config
+              export MAUTIC_DB_NAME=$MAUTIC_DB_NAME
+              export MAUTIC_DB_USER=$MAUTIC_DB_USER
+              export MAUTIC_DB_PASSWORD=$MAUTIC_DB_PASSWORD
+              export MAUTIC_ADMIN_EMAIL=$MAUTIC_ADMIN_EMAIL
+              export MAUTIC_ADMIN_USERNAME=$MAUTIC_ADMIN_USERNAME
+              export MAUTIC_ADMIN_PASSWORD=$MAUTIC_ADMIN_PASSWORD
+              exec /entrypoint.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /s/login
+              port: 80
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          volumeMounts:
+            - name: mautic-config
+              mountPath: /var/www/html/config
+            - name: mautic-logs
+              mountPath: /var/www/html/var/logs
+            - name: mautic-media
+              mountPath: /var/www/html/docroot/media
+      volumes:
+        - name: mautic-config
+          persistentVolumeClaim:
+            claimName: mautic-config
+        - name: mautic-logs
+          persistentVolumeClaim:
+            claimName: mautic-logs
+        - name: mautic-media
+          persistentVolumeClaim:
+            claimName: mautic-media
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-config
+  namespace: mautic
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-logs
+  namespace: mautic
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-media
+  namespace: mautic
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mautic
+  namespace: mautic
+spec:
+  selector:
+    app: mautic
+  ports:
+    - port: 80
+      targetPort: 80

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: n8n
+description: n8n workflow automation with PostgreSQL on K3s with Vault secret injection
+type: application
+version: 1.0.0
+appVersion: "2.11.4"

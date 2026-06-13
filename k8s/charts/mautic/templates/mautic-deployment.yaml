@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mautic
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.mautic.replicas }}
+  selector:
+    matchLabels:
+      app: mautic
+  template:
+    metadata:
+      labels:
+        app: mautic
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath }}
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{ "{{" }}- with secret "secret/data/mautic" -{{ "}}" }}
+          export MAUTIC_DB_NAME="{{ "{{" }} .Data.data.MYSQL_DB {{ "}}" }}"
+          export MAUTIC_DB_USER="{{ "{{" }} .Data.data.MYSQL_USER {{ "}}" }}"
+          export MAUTIC_DB_PASSWORD="{{ "{{" }} .Data.data.MYSQL_PASSWORD {{ "}}" }}"
+          export MAUTIC_ADMIN_EMAIL="{{ "{{" }} .Data.data.ADMIN_EMAIL {{ "}}" }}"
+          export MAUTIC_ADMIN_USERNAME="{{ "{{" }} .Data.data.ADMIN_USERNAME {{ "}}" }}"
+          export MAUTIC_ADMIN_PASSWORD="{{ "{{" }} .Data.data.ADMIN_PASSWORD {{ "}}" }}"
+          {{ "{{" }}- end {{ "}}" }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: mautic
+          image: {{ .Values.mautic.image.repository }}:{{ .Values.mautic.image.tag }}
+          imagePullPolicy: {{ .Values.mautic.image.pullPolicy }}
+          env:
+            - name: DOCKER_MAUTIC_ROLE
+              value: "mautic_web"
+            - name: MAUTIC_DB_HOST
+              value: {{ .Values.mautic.db.host | quote }}
+            - name: MAUTIC_DB_PORT
+              value: {{ .Values.mautic.db.port | quote }}
+            - name: MAUTIC_INSTALL_FROM_CLI
+              value: "true"
+            - name: MAUTIC_SITE_URL
+              value: {{ .Values.mautic.siteUrl | quote }}
+            - name: MAUTIC_MAILER_FROM_NAME
+              value: {{ .Values.mautic.mailer.fromName | quote }}
+            - name: MAUTIC_MAILER_FROM_EMAIL
+              value: {{ .Values.mautic.mailer.fromEmail | quote }}
+            - name: MAUTIC_MAILER_TRANSPORT
+              value: {{ .Values.mautic.mailer.transport | quote }}
+            - name: MAUTIC_MAILER_SPOOL_TYPE
+              value: {{ .Values.mautic.mailer.spoolType | quote }}
+            - name: PHP_MEMORY_LIMIT
+              value: {{ .Values.mautic.php.memoryLimit | quote }}
+            - name: PHP_MAX_EXECUTION_TIME
+              value: {{ .Values.mautic.php.maxExecutionTime | quote }}
+            - name: FLAVOUR
+              value: "apache"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              source /vault/secrets/config
+              export MAUTIC_DB_NAME=$MAUTIC_DB_NAME
+              export MAUTIC_DB_USER=$MAUTIC_DB_USER
+              export MAUTIC_DB_PASSWORD=$MAUTIC_DB_PASSWORD
+              export MAUTIC_ADMIN_EMAIL=$MAUTIC_ADMIN_EMAIL
+              export MAUTIC_ADMIN_USERNAME=$MAUTIC_ADMIN_USERNAME
+              export MAUTIC_ADMIN_PASSWORD=$MAUTIC_ADMIN_PASSWORD
+              exec /entrypoint.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              memory: {{ .Values.mautic.resources.requests.memory | quote }}
+              cpu: {{ .Values.mautic.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.mautic.resources.limits.memory | quote }}
+              cpu: {{ .Values.mautic.resources.limits.cpu | quote }}
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.mautic.livenessProbe.path }}
+              port: {{ .Values.mautic.livenessProbe.port }}
+            initialDelaySeconds: {{ .Values.mautic.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mautic.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.mautic.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.mautic.livenessProbe.failureThreshold }}
+          volumeMounts:
+            - name: mautic-config
+              mountPath: /var/www/html/config
+            - name: mautic-logs
+              mountPath: /var/www/html/var/logs
+            - name: mautic-media
+              mountPath: /var/www/html/docroot/media
+      volumes:
+        - name: mautic-config
+          persistentVolumeClaim:
+            claimName: mautic-config
+        - name: mautic-logs
+          persistentVolumeClaim:
+            claimName: mautic-logs
+        - name: mautic-media
+          persistentVolumeClaim:
+            claimName: mautic-media

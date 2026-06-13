@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wordpress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: wordpress

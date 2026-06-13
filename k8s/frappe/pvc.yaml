@@ -1,0 +1,32 @@
+---
+# frappe-sites: shared by gunicorn, workers, scheduler, socketio, nginx
+# Contains site config, installed apps, uploaded files
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: frappe-sites
+  namespace: frappe
+  labels:
+    app.kubernetes.io/name: frappe
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# frappe-logs: shared logs volume
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: frappe-logs
+  namespace: frappe
+  labels:
+    app.kubernetes.io/name: frappe
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

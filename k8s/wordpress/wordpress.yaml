@@ -1,0 +1,261 @@
+---
+# ── Service ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: wordpress
+spec:
+  selector:
+    app.kubernetes.io/component: wordpress
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ── Deployment ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: wordpress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: wordpress
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wordpress
+        app.kubernetes.io/component: wordpress
+      annotations:
+        # ── Vault Agent sidecar ───────────────────────────────────────────
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "wordpress"
+        vault.hashicorp.com/agent-pre-populate-only: "false"
+        vault.hashicorp.com/agent-init-first: "true"
+
+        # All 12 WordPress secrets + DB creds rendered as sourceable env file
+        vault.hashicorp.com/agent-inject-secret-wordpress.env: "secret/data/wordpress"
+        vault.hashicorp.com/agent-inject-template-wordpress.env: |
+          {{- with secret "secret/data/wordpress" -}}
+          export WORDPRESS_DB_HOST="wordpress-db:3306"
+          export WORDPRESS_DB_NAME="{{ .Data.data.WORDPRESS_DB_NAME }}"
+          export WORDPRESS_DB_USER="{{ .Data.data.WORDPRESS_DB_USER }}"
+          export WORDPRESS_DB_PASSWORD="{{ .Data.data.WORDPRESS_DB_PASSWORD }}"
+          export WORDPRESS_TABLE_PREFIX="{{ .Data.data.WORDPRESS_TABLE_PREFIX }}"
+          export WORDPRESS_AUTH_KEY="{{ .Data.data.WORDPRESS_AUTH_KEY }}"
+          export WORDPRESS_SECURE_AUTH_KEY="{{ .Data.data.WORDPRESS_SECURE_AUTH_KEY }}"
+          export WORDPRESS_LOGGED_IN_KEY="{{ .Data.data.WORDPRESS_LOGGED_IN_KEY }}"
+          export WORDPRESS_NONCE_KEY="{{ .Data.data.WORDPRESS_NONCE_KEY }}"
+          export WORDPRESS_AUTH_SALT="{{ .Data.data.WORDPRESS_AUTH_SALT }}"
+          export WORDPRESS_SECURE_AUTH_SALT="{{ .Data.data.WORDPRESS_SECURE_AUTH_SALT }}"
+          export WORDPRESS_LOGGED_IN_SALT="{{ .Data.data.WORDPRESS_LOGGED_IN_SALT }}"
+          export WORDPRESS_NONCE_SALT="{{ .Data.data.WORDPRESS_NONCE_SALT }}"
+          {{- end }}
+
+    spec:
+      serviceAccountName: wordpress
+      automountServiceAccountToken: true
+
+      # ── Pod security context ──────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: false   # wordpress:apache needs root to bind 80, drops to www-data
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ── Init: explicit gate so WordPress never starts before secrets exist ─
+      initContainers:
+        - name: wait-for-vault
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Vault secrets file..."
+              until [ -s /vault/secrets/wordpress.env ]; do
+                echo "  not ready, sleeping 2s..."
+                sleep 2
+              done
+              echo "Vault secrets present, proceeding."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MariaDB to be reachable..."
+              until nc -z wordpress-db 3306; do
+                echo "  MariaDB not up yet, sleeping 3s..."
+                sleep 3
+              done
+              echo "MariaDB is up."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: wordpress
+          # Apache variant - single process model, sources env vars correctly
+          # Vault sidecar writes to /vault/secrets/wordpress.env
+          # Apache entrypoint sources it and passes env to PHP via SetEnv / wp-config.php
+          image: wordpress:6.8.1-apache
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - bash
+            - /etc/wordpress-config/entrypoint.sh
+
+          # ── Container security context ──────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID", "NET_BIND_SERVICE"]
+            seccompProfile:
+              type: RuntimeDefault
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          # ── Resource limits ─────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # ── Health probes ───────────────────────────────────────────────
+          startupProbe:
+            httpGet:
+              path: /wp-login.php
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 18   # 3 min startup budget
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: 80
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 10
+
+          volumeMounts:
+            - name: wordpress-data
+              mountPath: /var/www/html
+            - name: wordpress-config
+              mountPath: /etc/wordpress-config
+              readOnly: true
+
+      volumes:
+        - name: wordpress-config
+          configMap:
+            name: wordpress-config
+        - name: wordpress-data
+          persistentVolumeClaim:
+            claimName: wordpress-data
+
+---
+# ── PersistentVolumeClaim ────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-data
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: wordpress
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ── HorizontalPodAutoscaler ──────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wordpress
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wordpress
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# ── PodDisruptionBudget ──────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wordpress
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: wordpress

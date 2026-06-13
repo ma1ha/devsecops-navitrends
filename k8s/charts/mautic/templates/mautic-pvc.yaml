@@ -1,0 +1,69 @@
+# templates/mautic-pvc.yaml
+# -----------------------------------------------------------
+# Three PVCs for Mautic's stateful data:
+#
+#   mautic-config  → /var/www/html/config      (Mautic app config files)
+#   mautic-logs    → /var/www/html/var/logs     (application logs)
+#   mautic-media   → /var/www/html/docroot/media (uploaded images/files)
+#
+# Why separate PVCs instead of one big one?
+#   - Lets you resize/backup each independently
+#   - Logs can fill up fast — isolated from config and media
+#   - Media needs more space — 2Gi vs 1Gi for others
+#
+# ReadWriteOnce = only ONE node can mount this at a time.
+# Fine here because replicas: 1. If you ever scale mautic
+# horizontally, you'd need ReadWriteMany (NFS/Longhorn/etc).
+#
+# No storageClassName here → uses cluster default (local-path on K3s).
+# MariaDB DOES specify storageClass explicitly in its volumeClaimTemplate.
+# -----------------------------------------------------------
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mautic.persistence.config.size }}
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-logs
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mautic.persistence.logs.size }}
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mautic-media
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mautic.persistence.media.size }}

@@ -1,0 +1,35 @@
+# templates/mautic-service.yaml
+# -----------------------------------------------------------
+# ClusterIP Service for Mautic.
+#
+# Why ClusterIP and not NodePort/LoadBalancer?
+#   Because Traefik is your ingress controller.
+#   The traffic flow is:
+#     Internet → Traefik (NodePort 80/443) → this ClusterIP Service → Mautic pod
+#   Traefik handles TLS termination and routing by hostname.
+#   This Service just needs to be reachable inside the cluster.
+#
+# The selector `app: mautic` must match the pod labels in mautic-deployment.yaml.
+# That's how K8s knows which pods to route traffic to.
+# -----------------------------------------------------------
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mautic
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  # ClusterIP = internal-only, reachable within the cluster.
+  # No need to expose to the node since Traefik handles ingress.
+  type: ClusterIP
+  selector:
+    app: mautic
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP

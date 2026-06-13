@@ -1,0 +1,6 @@
+apiVersion: v2
+name: wordpress
+description: WordPress with MariaDB on K3s with Vault secret injection
+type: application
+version: 1.0.0
+appVersion: "6.8.1-apache"

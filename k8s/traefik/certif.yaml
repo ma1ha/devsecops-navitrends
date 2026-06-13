@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: maha-nav-ovh
+  namespace: traefik
+spec:
+  secretName: maha-nav-ovh-tls
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+  commonName: maha.nav.ovh
+  dnsNames:
+    - maha.nav.ovh

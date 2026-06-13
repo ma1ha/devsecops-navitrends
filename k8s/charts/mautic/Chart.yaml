@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mautic
+description: Mautic marketing automation platform with MariaDB, deployed on K3s with HashiCorp Vault secret injection
+type: application
+version: 1.0.0
+appVersion: "5-apache"
+keywords:
+  - mautic
+  - marketing
+  - mariadb
+  - vault
+maintainers:
+  - name: maha
+    email: noreply@navitrends.com

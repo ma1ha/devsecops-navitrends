@@ -1,0 +1,18 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: crowdsec-bouncer
+  namespace: traefik
+spec:
+  plugin:
+    crowdsec-bouncer-traefik-plugin:
+      enabled: true
+      logLevel: INFO
+      crowdsecMode: live
+      crowdsecLapiScheme: http
+      crowdsecLapiHost: 10.43.21.181:8080
+      crowdsecLapiKeyFile: "/etc/crowdsec/api-key"
+      crowdsecAppsecEnabled: true
+      crowdsecAppsecHost: 10.43.91.232:7422
+      crowdsecAppsecFailureBlock: true
+      crowdsecAppsecUnreachableBlock: false

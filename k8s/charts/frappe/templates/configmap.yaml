@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frappe-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  common_site_config.json: |
+    {
+      "db_host": "frappe-db",
+      "db_port": 3306,
+      "redis_cache": "redis://frappe-redis-cache:6379",
+      "redis_queue": "redis://frappe-redis-queue:6379",
+      "redis_socketio": "redis://frappe-redis-queue:6379",
+      "socketio_port": 9000,
+      "webserver_port": 8000,
+      "background_workers": 1,
+      "serve_default_site": 1,
+      "auto_update": 0
+    }

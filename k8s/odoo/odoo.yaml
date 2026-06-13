@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odoo
+  namespace: odoo
+spec:
+  revisionHistoryLimit: 0  
+  replicas: 1
+  selector:
+    matchLabels:
+      app: odoo
+  template:
+    metadata:
+      labels:
+        app: odoo
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "odoo"
+        vault.hashicorp.com/agent-inject-secret-config: "secret/data/odoo"
+        vault.hashicorp.com/agent-inject-file-config: "config"
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/odoo" -}}
+          [options]
+          db_host = odoo-postgres
+          db_port = 5432
+          db_name = {{ .Data.data.POSTGRES_DB }}
+          db_user = {{ .Data.data.POSTGRES_USER }}
+          db_password = {{ .Data.data.POSTGRES_PASSWORD }}
+          addons_path = /usr/lib/python3/dist-packages/odoo/addons,/var/lib/odoo/addons/18.0,/mnt/extra-addons
+          data_dir = /var/lib/odoo
+          {{- end }}
+    spec:
+      restartPolicy: Always
+      serviceAccountName: odoo
+      terminationGracePeriodSeconds: 30
+      
+     
+      securityContext:
+        runAsNonRoot: false  
+        fsGroup: 0
+      
+      containers:
+        - name: odoo
+          image: odoo:18.0
+          imagePullPolicy: IfNotPresent
+          
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent to inject config file..."
+                sleep 2
+              done
+              
+              exec odoo --config /vault/secrets/config \
+                -i base,web,mail,account,account_accountant,sale_management,\
+              purchase,stock,mrp,project,crm,hr,hr_payroll,hr_expense,\
+              hr_holidays,fleet,maintenance,helpdesk,timesheet,\
+              website,ecommerce,point_of_sale,inventory \
+                -d odoo_prod
+          
+          ports:
+            - containerPort: 8069
+              name: http
+          
+          startupProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30 
+            successThreshold: 1
+          
+          readinessProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          
+          livenessProbe:
+            httpGet:
+              path: /web/login
+              port: 8069
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          
+         
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false 
+            capabilities:
+              drop:
+              - ALL
+          
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          
+          volumeMounts:
+            - name: odoo-data
+              mountPath: /var/lib/odoo
+      
+      volumes:
+        - name: odoo-data
+          persistentVolumeClaim:
+            claimName: odoo-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odoo-data
+  namespace: odoo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-path
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odoo
+  namespace: odoo
+spec:
+  selector:
+    app: odoo
+  ports:
+    - port: 8069
+      targetPort: 8069
+      name: http

@@ -1,0 +1,151 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: wordpress-db
+  namespace: wordpress
+  labels:
+    app: wordpress-db
+spec:
+  serviceName: wordpress-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress-db
+  
+  template:
+    metadata:
+      labels:
+        app: wordpress-db
+      annotations:
+        # Vault Agent Sidecar Injection
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "wordpress"
+        vault.hashicorp.com/agent-inject-secret-db: "secret/wordpress"
+        vault.hashicorp.com/agent-inject-file-db: "database-config"
+        vault.hashicorp.com/agent-inject-template-db: |
+          {{- with secret "secret/wordpress" -}}
+          export MYSQL_DATABASE="{{ .Data.data.WORDPRESS_DB_NAME }}"
+          export MYSQL_USER="{{ .Data.data.WORDPRESS_DB_USER }}"
+          export MYSQL_PASSWORD="{{ .Data.data.WORDPRESS_DB_PASSWORD }}"
+          export MYSQL_ROOT_PASSWORD="{{ .Data.data.WORDPRESS_DB_ROOT_PASSWORD }}"
+          {{- end }}
+    
+    spec:
+      serviceAccountName: wordpress
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: false
+        fsGroup: 999
+      
+      containers:
+        - name: mariadb
+          image: mariadb:11.3
+          imagePullPolicy: IfNotPresent
+          
+          # CRITICAL: Wait for Vault, source env vars, then start DB
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "🔐 Waiting for Vault Agent to inject secrets..."
+              until [ -f /vault/secrets/database-config ]; do
+                echo "   Waiting for /vault/secrets/database-config..."
+                sleep 2
+              done
+              
+              echo "🔐 Loading secrets from Vault..."
+              source /vault/secrets/database-config
+              
+              echo "🗄️  Starting MariaDB with credentials from Vault..."
+              exec docker-entrypoint.sh \
+                --local-infile=0 \
+                --symbolic-links=0 \
+                --skip-show-database \
+                --character-set-server=utf8mb4 \
+                --collation-server=utf8mb4_unicode_ci \
+                --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION \
+                --slow-query-log=1 \
+                --long-query-time=2 \
+                --max-allowed-packet=64M \
+                --innodb-file-per-table=1
+          
+          ports:
+            - containerPort: 3306
+              name: mariadb
+          
+          # Startup probe: give DB 30 seconds to initialize
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          
+          # Readiness probe: check if DB is accepting connections
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          # Liveness probe: keep it running
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
+          
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          
+          volumeMounts:
+            - name: wordpress-db-data
+              mountPath: /var/lib/mysql
+  
+  # Persistent storage for database
+  volumeClaimTemplates:
+    - metadata:
+        name: wordpress-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-db
+  namespace: wordpress
+  labels:
+    app: wordpress-db
+spec:
+  # Headless service for StatefulSet
+  clusterIP: None
+  selector:
+    app: wordpress-db
+  ports:
+    - port: 3306
+      targetPort: 3306
+      name: mariadb

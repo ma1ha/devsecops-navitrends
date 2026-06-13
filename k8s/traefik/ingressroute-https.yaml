@@ -1,0 +1,172 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: https-routes
+  namespace: traefik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/wordpress`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-wordpress
+          namespace: traefik
+      services:
+        - name: wordpress
+          namespace: wordpress
+          port: 80
+
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/odoo`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-odoo
+          namespace: traefik
+      services:
+        - name: odoo
+          namespace: odoo
+          port: 8069
+
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/n8n`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-n8n
+          namespace: traefik
+      services:
+        - name: n8n
+          namespace: n8n
+          port: 5678
+
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/nextcloud`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-nextcloud
+          namespace: traefik
+      services:
+        - name: nextcloud
+          namespace: nextcloud
+          port: 80
+
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/mautic`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-mautic
+          namespace: traefik
+      services:
+        - name: mautic
+          namespace: mautic
+          port: 80
+
+    - match: Host(`maha.nav.ovh`) && PathPrefix(`/erpnext`)
+      kind: Rule
+      middlewares:
+        - name: crowdsec-bouncer
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+        - name: strip-erpnext
+          namespace: traefik
+      services:
+        - name: frappe
+          namespace: frappe
+          port: 8080
+  tls:
+    secretName: maha-nav-ovh-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-wordpress
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /wordpress
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-odoo
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /odoo
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-n8n
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /n8n
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-nextcloud
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /nextcloud
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-mautic
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /mautic
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-erpnext
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /erpnext

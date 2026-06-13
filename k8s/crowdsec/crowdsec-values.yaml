@@ -1,0 +1,106 @@
+container_runtime: containerd
+
+agent:
+  enabled: true
+  isDeployment: true
+  replicas: 1
+  updateStrategy:
+    type: Recreate
+
+  acquisition:
+    - namespace: traefik
+      podName: traefik-*
+      program: traefik
+      poll_without_inotify: true
+
+  env:
+    - name: COLLECTIONS
+      value: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/wordpress crowdsecurity/base-http-scenarios crowdsecurity/http-dos crowdsecurity/whitelist-good-actors"
+    - name: PARSERS
+      value: "crowdsecurity/whitelists"
+    - name: POSTOVERFLOWS
+      value: "crowdsecurity/rdns"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+
+lapi:
+  enabled: true
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  persistentVolume:
+    data:
+      enabled: true
+      storageClassName: local-path
+      size: 1Gi
+    config:
+      enabled: true
+      storageClassName: local-path
+      size: 100Mi
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+
+appsec:
+  enabled: true
+  replicas: 1
+
+  acquisitions:
+    - source: appsec
+      listen_addr: "0.0.0.0:7422"
+      path: /
+      appsec_config: crowdsecurity/virtual-patching
+      labels:
+        type: appsec
+
+  env:
+    - name: COLLECTIONS
+      value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs crowdsecurity/appsec-generic-rules"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+
+
+config:
+  postoverflows:
+    s01-whitelist:
+      mywhitelists.yaml: |
+        name: crowdsecurity/whitelists
+        description: "Whitelist internal and VPN IPs"
+        whitelist:
+          reason: "Internal/VPN traffic"
+          ip:
+            - "127.0.0.1"
+            - "10.0.0.2"
+            - "10.0.1.20"
+            - "164.160.1.137"
+          cidr:
+            - "10.0.0.0/8"
+            - "172.16.0.0/12"

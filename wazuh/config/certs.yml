@@ -19,6 +19,6 @@ nodes:
     - name: wazuh.dashboard
       ip:
         - 127.0.0.1
-        - 172.27.0.4
+        - 172.27.0.4 
       dns:
         - wazuh.dashboard

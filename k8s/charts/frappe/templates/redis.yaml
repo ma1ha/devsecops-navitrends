@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frappe-redis-cache
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/component: redis-cache
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/component: redis-cache
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frappe-redis-cache
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/component: redis-cache
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: redis-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frappe
+        app.kubernetes.io/component: redis-cache
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          command:
+            - redis-server
+            - --maxmemory
+            - 256mb
+            - --maxmemory-policy
+            - allkeys-lru
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: {{ .Values.redis.cache.resources.requests.memory | quote }}
+              cpu: {{ .Values.redis.cache.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.redis.cache.resources.limits.memory | quote }}
+              cpu: {{ .Values.redis.cache.resources.limits.cpu | quote }}
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: redis-cache-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: redis-cache-data
+          persistentVolumeClaim:
+            claimName: frappe-redis-cache-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frappe-redis-queue
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/component: redis-queue
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/component: redis-queue
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frappe-redis-queue
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/component: redis-queue
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: redis-queue
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frappe
+        app.kubernetes.io/component: redis-queue
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: {{ .Values.redis.queue.resources.requests.memory | quote }}
+              cpu: {{ .Values.redis.queue.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.redis.queue.resources.limits.memory | quote }}
+              cpu: {{ .Values.redis.queue.resources.limits.cpu | quote }}
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            - name: redis-queue-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: redis-queue-data
+          persistentVolumeClaim:
+            claimName: frappe-redis-queue-data
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,140 @@
+# ============================================================
+# values.yaml — Mautic Helm Chart
+# All hardcoded values from raw YAMLs live here.
+# Override at install time with:
+#   helm install mautic ./charts/mautic -f my-overrides.yaml
+#   helm install mautic ./charts/mautic --set mautic.replicas=2
+# ============================================================
+
+# ----------------------------
+# Namespace
+# ----------------------------
+namespace: mautic
+
+# ----------------------------
+# ServiceAccount
+# Used by BOTH mautic and mariadb pods
+# Vault agent sidecar needs this to authenticate
+# ----------------------------
+serviceAccount:
+  name: mautic
+
+# ----------------------------
+# Vault Configuration
+# These values are used in pod annotations to tell the
+# Vault Agent Injector where to pull secrets from.
+# ----------------------------
+vault:
+  role: mautic
+  secretPath: secret/data/mautic
+  # The filename written inside /vault/secrets/
+  secretFile: config
+
+# ----------------------------
+# Mautic Application
+# ----------------------------
+mautic:
+  replicas: 1
+
+  image:
+    repository: mautic/mautic
+    tag: "5-apache"
+    pullPolicy: IfNotPresent
+
+  # Public URL of the Mautic instance
+  siteUrl: "https://mautic.navitrends-maha.duckdns.org"
+
+  # MariaDB connection — points to the headless Service name
+  db:
+    host: mautic-mariadb
+    port: "3306"
+
+  # Mailer config (using local mail transport, no SMTP)
+  mailer:
+    fromName: "Mautic"
+    fromEmail: "noreply@navitrends.com"
+    transport: mail
+    spoolType: memory
+
+  # PHP tuning
+  php:
+    memoryLimit: "512M"
+    maxExecutionTime: "300"
+
+  # Resource requests/limits for the mautic container
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  # Liveness probe — checks /s/login on port 80
+  livenessProbe:
+    path: /s/login
+    port: 80
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 10
+
+  # Persistent Volume Claims for mautic data
+  # Each gets its own PVC (ReadWriteOnce = one node at a time)
+  persistence:
+    config:
+      size: 1Gi
+    logs:
+      size: 1Gi
+    media:
+      size: 2Gi
+
+# ----------------------------
+# MariaDB StatefulSet
+# StatefulSet (not Deployment) because DB needs stable
+# network identity and persistent storage per-pod.
+# ----------------------------
+mariadb:
+  image:
+    repository: mariadb
+    tag: "10.11"
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # StatefulSet volumeClaimTemplate storage
+  persistence:
+    size: 5Gi
+    storageClass: local-path
+
+  # Pod security: run as mysql user (uid 999)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+
+  # Probes — all TCP socket checks on 3306
+  startupProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+
+  readinessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 5

@@ -1,0 +1,63 @@
+<decoder name="jenkins-wazuh">
+  <prematch>{"timestamp":"20</prematch>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"event_type":"(\w+)"</regex>
+  <order>event_type</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"severity":"(\w+)"</regex>
+  <order>data.severity</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"service":"([^&quot;]+)"</regex>
+  <order>data.service</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"type":"([^&quot;]+)"</regex>
+  <order>data.type</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"findings":(\d+)</regex>
+  <order>data.findings</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"cve":"([^&quot;]+)"</regex>
+  <order>data.cve</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"package":"([^&quot;]+)"</regex>
+  <order>data.package</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"rule_id":"([^&quot;]+)"</regex>
+  <order>data.rule_id</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"rule_name":"([^&quot;]+)"</regex>
+  <order>data.rule_name</order>
+</decoder>
+
+<decoder name="jenkins-wazuh">
+  <parent>jenkins-wazuh</parent>
+  <regex>"result":"([^&quot;]+)"</regex>
+  <order>data.result</order>
+</decoder>

@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: n8n
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.n8n.replicas }}
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: n8n
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: n8n
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath }}
+        vault.hashicorp.com/agent-inject-file-config: {{ .Values.vault.secretFile }}
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{ "{{" }}- with secret "secret/data/n8n" -{{ "}}" }}
+          export DB_POSTGRESDB_DATABASE="{{ "{{" }} .Data.data.POSTGRES_DB {{ "}}" }}"
+          export DB_POSTGRESDB_USER="{{ "{{" }} .Data.data.POSTGRES_USER {{ "}}" }}"
+          export DB_POSTGRESDB_PASSWORD="{{ "{{" }} .Data.data.POSTGRES_PASSWORD {{ "}}" }}"
+          export N8N_ENCRYPTION_KEY="{{ "{{" }} .Data.data.ENCRYPTION_KEY {{ "}}" }}"
+          export N8N_USER_MANAGEMENT_JWT_SECRET="{{ "{{" }} .Data.data.JWT_SECRET {{ "}}" }}"
+          {{ "{{" }}- end {{ "}}" }}
+    spec:
+      restartPolicy: Always
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      
+      containers:
+        - name: n8n
+          image: {{ .Values.n8n.image.repository }}:{{ .Values.n8n.image.tag }}
+          imagePullPolicy: {{ .Values.n8n.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent to inject secrets..."
+                sleep 2
+              done
+              source /vault/secrets/config
+              exec n8n start
+          env:
+            - name: N8N_PROTOCOL
+              value: "http"
+            - name: N8N_HOST
+              value: {{ .Values.n8n.host | quote }}
+            - name: N8N_PORT
+              value: "5678"
+            - name: N8N_WEBHOOK_URL
+              value: {{ .Values.n8n.webhookUrl | quote }}
+            - name: WEBHOOK_URL
+              value: {{ .Values.n8n.webhookUrl | quote }}
+            - name: GENERIC_TIMEZONE
+              value: {{ .Values.n8n.timezone | quote }}
+            - name: N8N_METRICS
+              value: "true"
+            - name: N8N_USER_MANAGEMENT_DISABLED
+              value: "false"
+            - name: N8N_SECURE_COOKIE
+              value: "true"
+            - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+              value: "true"
+            - name: N8N_PAYLOAD_SIZE_MAX
+              value: "10485760"
+            - name: N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN
+              value: "true"
+            - name: DB_TYPE
+              value: "postgresdb"
+            - name: DB_POSTGRESDB_HOST
+              value: {{ .Values.n8n.db.host | quote }}
+            - name: DB_POSTGRESDB_PORT
+              value: {{ .Values.n8n.db.port | quote }}
+            - name: EXECUTIONS_DATA_PRUNE
+              value: "true"
+            - name: EXECUTIONS_DATA_MAX_AGE
+              value: "168"
+          ports:
+            - containerPort: 5678
+              name: http
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 5678
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.n8n.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.n8n.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.n8n.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.n8n.startupProbe.failureThreshold }}
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5678
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.n8n.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.n8n.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.n8n.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.n8n.readinessProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5678
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.n8n.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.n8n.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.n8n.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.n8n.livenessProbe.failureThreshold }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: {{ .Values.n8n.resources.requests.memory | quote }}
+              cpu: {{ .Values.n8n.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.n8n.resources.limits.memory | quote }}
+              cpu: {{ .Values.n8n.resources.limits.cpu | quote }}
+          volumeMounts:
+            - name: n8n-data
+              mountPath: /home/node/.n8n
+      volumes:
+        - name: n8n-data
+          persistentVolumeClaim:
+            claimName: n8n-data

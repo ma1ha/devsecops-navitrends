@@ -1,0 +1,130 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nextcloud-postgres
+  namespace: nextcloud
+spec:
+  serviceName: nextcloud-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nextcloud-postgres
+  
+  template:
+    metadata:
+      labels:
+        app: nextcloud-postgres
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "nextcloud"
+        vault.hashicorp.com/agent-inject-secret-config: "secret/data/next_cloud"
+        vault.hashicorp.com/agent-inject-file-config: "config"
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/next_cloud" -}}
+          export POSTGRES_DB="{{ .Data.data.POSTGRES_DB }}"
+          export POSTGRES_USER="{{ .Data.data.POSTGRES_USER }}"
+          export POSTGRES_PASSWORD="{{ .Data.data.POSTGRES_PASSWORD }}"
+          {{- end }}
+    
+    spec:
+      serviceAccountName: nextcloud
+      terminationGracePeriodSeconds: 30
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      
+      containers:
+        - name: postgres
+          image: postgres:15.10
+          imagePullPolicy: IfNotPresent
+          
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent..."
+                sleep 2
+              done
+              
+              source /vault/secrets/config
+              exec docker-entrypoint.sh postgres
+          
+          ports:
+            - containerPort: 5432
+              name: postgres
+          
+          startupProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+            successThreshold: 1
+          
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+              - ALL
+          
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: local-path
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-postgres
+  namespace: nextcloud
+  labels:
+    app: nextcloud-postgres
+spec:
+  clusterIP: None
+  selector:
+    app: nextcloud-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres

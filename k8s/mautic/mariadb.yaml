@@ -1,0 +1,133 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mautic-mariadb
+  namespace: mautic
+spec:
+  serviceName: mautic-mariadb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mautic-mariadb
+  
+  template:
+    metadata:
+      labels:
+        app: mautic-mariadb
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "mautic"
+        vault.hashicorp.com/agent-inject-secret-config: "secret/data/mautic"
+        vault.hashicorp.com/agent-inject-file-config: "config"
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/mautic" -}}
+          export MYSQL_ROOT_PASSWORD="{{ .Data.data.MYSQL_ROOT_PASSWORD }}"
+          export MYSQL_DATABASE="{{ .Data.data.MYSQL_DB }}"
+          export MYSQL_USER="{{ .Data.data.MYSQL_USER }}"
+          export MYSQL_PASSWORD="{{ .Data.data.MYSQL_PASSWORD }}"
+          {{- end }}
+    
+    spec:
+      serviceAccountName: mautic
+      terminationGracePeriodSeconds: 30
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      
+      containers:
+        - name: mariadb
+          image: mariadb:10.11
+          imagePullPolicy: IfNotPresent
+          
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent..."
+                sleep 2
+              done
+              
+              source /vault/secrets/config
+              exec docker-entrypoint.sh \
+                --character-set-server=utf8mb4 \
+                --collation-server=utf8mb4_unicode_ci
+          
+          ports:
+            - containerPort: 3306
+              name: mariadb
+          
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+            successThreshold: 1
+          
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+              - ALL
+          
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          
+          volumeMounts:
+            - name: mariadb-data
+              mountPath: /var/lib/mysql
+  
+  volumeClaimTemplates:
+    - metadata:
+        name: mariadb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: local-path
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mautic-mariadb
+  namespace: mautic
+  labels:
+    app: mautic-mariadb
+spec:
+  clusterIP: None
+  selector:
+    app: mautic-mariadb
+  ports:
+    - port: 3306
+      targetPort: 3306
+      name: mariadb

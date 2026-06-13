@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mautic-mariadb
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mautic-mariadb
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  serviceName: mautic-mariadb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mautic-mariadb
+  template:
+    metadata:
+      labels:
+        app: mautic-mariadb
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath }}
+        vault.hashicorp.com/agent-inject-file-config: {{ .Values.vault.secretFile }}
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{ "{{" }}- with secret "secret/data/mautic" -{{ "}}" }}
+          export MYSQL_ROOT_PASSWORD="{{ "{{" }} .Data.data.MYSQL_ROOT_PASSWORD {{ "}}" }}"
+          export MYSQL_DATABASE="{{ "{{" }} .Data.data.MYSQL_DB {{ "}}" }}"
+          export MYSQL_USER="{{ "{{" }} .Data.data.MYSQL_USER {{ "}}" }}"
+          export MYSQL_PASSWORD="{{ "{{" }} .Data.data.MYSQL_PASSWORD {{ "}}" }}"
+          {{ "{{" }}- end {{ "}}" }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: {{ .Values.mariadb.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.mariadb.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.mariadb.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.mariadb.securityContext.fsGroup }}
+      containers:
+        - name: mariadb
+          image: {{ .Values.mariadb.image.repository }}:{{ .Values.mariadb.image.tag }}
+          imagePullPolicy: {{ .Values.mariadb.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent to write secrets..."
+                sleep 2
+              done
+              source /vault/secrets/config
+              exec docker-entrypoint.sh \
+                --character-set-server=utf8mb4 \
+                --collation-server=utf8mb4_unicode_ci
+          ports:
+            - containerPort: 3306
+              name: mariadb
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: {{ .Values.mariadb.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mariadb.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.mariadb.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.mariadb.startupProbe.failureThreshold }}
+            successThreshold: 1
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: {{ .Values.mariadb.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mariadb.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.mariadb.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.mariadb.readinessProbe.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: {{ .Values.mariadb.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.mariadb.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.mariadb.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.mariadb.livenessProbe.failureThreshold }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: {{ .Values.mariadb.resources.requests.memory | quote }}
+              cpu: {{ .Values.mariadb.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.mariadb.resources.limits.memory | quote }}
+              cpu: {{ .Values.mariadb.resources.limits.cpu | quote }}
+          volumeMounts:
+            - name: mariadb-data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: mariadb-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{ .Values.mariadb.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.persistence.size }}

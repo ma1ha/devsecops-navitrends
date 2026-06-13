@@ -1,0 +1,6 @@
+apiVersion: v2
+name: frappe
+description: Frappe/ERPNext on K3s with Vault secret injection
+type: application
+version: 1.0.0
+appVersion: "v15"

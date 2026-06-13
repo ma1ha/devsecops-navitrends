@@ -1,0 +1,188 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: frappe-create-site
+  namespace: frappe
+  labels:
+    app.kubernetes.io/name: frappe
+    app.kubernetes.io/component: create-site
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frappe
+        app.kubernetes.io/component: create-site
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "frappe"
+        vault.hashicorp.com/agent-init-first: "true"
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-inject-secret-frappe.env: "secret/data/frappe"
+        vault.hashicorp.com/agent-inject-template-frappe.env: |
+          {{- with secret "secret/data/frappe" -}}
+          export FRAPPE_MYSQL_ROOT_PASSWORD="{{ .Data.data.FRAPPE_MYSQL_ROOT_PASSWORD }}"
+          export FRAPPE_ADMIN_PASSWORD="{{ .Data.data.FRAPPE_ADMIN_PASSWORD }}"
+          export FRAPPE_ENCRYPTION_KEY="{{ .Data.data.FRAPPE_ENCRYPTION_KEY }}"
+          {{- end }}
+    spec:
+      serviceAccountName: frappe
+      restartPolicy: OnFailure
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: wait-for-vault
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until [ -s /vault/secrets/frappe.env ]; do
+                echo "Waiting for Vault secrets..."
+                sleep 2
+              done
+              echo "Vault secrets ready."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z frappe-db 3306; do
+                echo "Waiting for MariaDB..."
+                sleep 3
+              done
+              echo "MariaDB is up."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z frappe-redis-cache 6379 && nc -z frappe-redis-queue 6379; do
+                echo "Waiting for Redis..."
+                sleep 3
+              done
+              echo "Redis is up."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: create-site
+          image: frappe/erpnext:v15
+          imagePullPolicy: IfNotPresent
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+
+              source /vault/secrets/frappe.env
+
+              # Idempotency lock - skip if already initialized
+              if [ -f /home/frappe/frappe-bench/sites/.site-initialized ]; then
+                echo "=== Already initialized - skipping ==="
+                exit 0
+              fi
+
+              echo "=== [1/6] Writing common_site_config.json ==="
+              mkdir -p /home/frappe/frappe-bench/sites
+              cp /etc/frappe-config/common_site_config.json \
+                 /home/frappe/frappe-bench/sites/common_site_config.json
+
+              echo "=== Ensuring apps.txt exists ==="
+              if [ ! -f /home/frappe/frappe-bench/sites/apps.txt ]; then
+                printf "frappe\nerpnext\n" > /home/frappe/frappe-bench/sites/apps.txt
+                echo "apps.txt created:"
+                cat /home/frappe/frappe-bench/sites/apps.txt
+              fi
+
+              echo "=== [2/6] Waiting for MariaDB to accept connections ==="
+              for i in $(seq 1 30); do
+                mysql -h frappe-db -u root -p"$FRAPPE_MYSQL_ROOT_PASSWORD" \
+                  -e "SELECT 1" >/dev/null 2>&1 && break
+                echo "Attempt $i/30..."
+                sleep 5
+              done
+
+              echo "=== [3/6] Creating site ==="
+              SITE_NAME=${FRAPPE_SITE_NAME:-erpnext.localhost}
+              if [ ! -d /home/frappe/frappe-bench/sites/$SITE_NAME ]; then
+                bench new-site $SITE_NAME \
+                  --db-host frappe-db \
+                  --db-root-password "$FRAPPE_MYSQL_ROOT_PASSWORD" \
+                  --admin-password "$FRAPPE_ADMIN_PASSWORD" \
+                  --install-app erpnext \
+                  --set-default \
+                  --mariadb-user-host-login-scope="%"
+              else
+                echo "Site $SITE_NAME already exists, skipping creation."
+              fi
+
+              echo "=== [4/6] Setting encryption key ==="
+              bench --site $SITE_NAME set-config encryption_key "$FRAPPE_ENCRYPTION_KEY"
+
+              echo "=== [5/6] Running migrations ==="
+              bench --site $SITE_NAME migrate
+
+              echo "=== [6/6] Enabling scheduler ==="
+              bench --site $SITE_NAME enable-scheduler
+
+              touch /home/frappe/frappe-bench/sites/.site-initialized
+              echo "=== DONE - Site initialized successfully ==="
+
+          env:
+            - name: FRAPPE_SITE_NAME
+              value: "erpnext.localhost"
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+
+          volumeMounts:
+            - name: frappe-sites
+              mountPath: /home/frappe/frappe-bench/sites
+            - name: frappe-logs
+              mountPath: /home/frappe/frappe-bench/logs
+            - name: frappe-config
+              mountPath: /etc/frappe-config
+              readOnly: true
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+
+      volumes:
+        - name: frappe-sites
+          persistentVolumeClaim:
+            claimName: frappe-sites
+        - name: frappe-logs
+          persistentVolumeClaim:
+            claimName: frappe-logs
+        - name: frappe-config
+          configMap:
+            name: frappe-config

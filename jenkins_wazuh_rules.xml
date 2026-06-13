@@ -1,0 +1,149 @@
+<group name="jenkins,devsecops">
+
+  <!-- GITLEAKS -->
+  <rule id="199001" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">gitleaks_clean</field>
+    <description>Jenkins: Gitleaks scan clean — no secrets detected</description>
+  </rule>
+
+  <rule id="199002" level="14">
+    <if_sid>86600</if_sid>
+    <field name="event_type">gitleaks_secrets_found</field>
+    <description>Jenkins: Gitleaks detected secrets in the repository</description>
+  </rule>
+
+  <!-- SEMGREP -->
+  <rule id="199010" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">semgrep_clean</field>
+    <description>Jenkins: Semgrep SAST scan clean</description>
+  </rule>
+
+  <rule id="199011" level="5">
+    <if_sid>86600</if_sid>
+    <field name="event_type">semgrep_warnings</field>
+    <description>Jenkins: Semgrep SAST warnings detected</description>
+  </rule>
+
+  <rule id="199012" level="10">
+    <if_sid>86600</if_sid>
+    <field name="event_type">semgrep_blocking</field>
+    <description>Jenkins: Semgrep SAST blocking findings detected</description>
+  </rule>
+
+  <!-- DCLINT -->
+  <rule id="199020" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">dclint_clean</field>
+    <description>Jenkins: DCLint passed for $(data.service)</description>
+  </rule>
+
+  <rule id="199021" level="4">
+    <if_sid>86600</if_sid>
+    <field name="event_type">dclint_issues</field>
+    <description>Jenkins: DCLint issues found in $(data.service)</description>
+  </rule>
+
+  <!-- TRIVY -->
+  <rule id="199030" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">trivy_summary</field>
+    <field name="data.findings">^0$</field>
+    <description>Jenkins: Trivy scan clean for $(data.service)</description>
+  </rule>
+
+  <rule id="199031" level="7">
+    <if_sid>86600</if_sid>
+    <field name="event_type">trivy_finding</field>
+    <field name="data.severity">MEDIUM</field>
+    <description>Jenkins: Trivy MEDIUM vulnerability $(data.cve) in $(data.service) — package $(data.package)</description>
+  </rule>
+
+  <rule id="199032" level="10">
+    <if_sid>86600</if_sid>
+    <field name="event_type">trivy_finding</field>
+    <field name="data.severity">HIGH</field>
+    <description>Jenkins: Trivy HIGH vulnerability $(data.cve) in $(data.service) — package $(data.package)</description>
+  </rule>
+
+  <rule id="199033" level="12">
+    <if_sid>86600</if_sid>
+    <field name="event_type">trivy_finding</field>
+    <field name="data.severity">CRITICAL</field>
+    <description>Jenkins: Trivy CRITICAL vulnerability $(data.cve) in $(data.service) — package $(data.package)</description>
+  </rule>
+
+  <!-- ZAP -->
+  <rule id="199040" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">zap_summary</field>
+    <field name="data.findings">^0$</field>
+    <description>Jenkins: ZAP scan clean for $(data.service)</description>
+  </rule>
+
+  <rule id="199041" level="5">
+    <if_sid>86600</if_sid>
+    <field name="event_type">zap_finding</field>
+    <field name="data.type">WARN-NEW</field>
+    <description>Jenkins: ZAP warning [$(data.rule_id)] $(data.rule_name) on $(data.service)</description>
+  </rule>
+
+  <rule id="199042" level="8">
+    <if_sid>86600</if_sid>
+    <field name="event_type">zap_finding</field>
+    <field name="data.type">FAIL-NEW</field>
+    <description>Jenkins: ZAP failure [$(data.rule_id)] $(data.rule_name) on $(data.service)</description>
+  </rule>
+
+  <!-- VAULT -->
+  <rule id="199050" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">vault_healthy</field>
+    <description>Jenkins: Vault is unsealed and healthy</description>
+  </rule>
+
+  <rule id="199051" level="8">
+    <if_sid>86600</if_sid>
+    <field name="event_type">vault_sealed</field>
+    <description>Jenkins: Vault is sealed — pipeline cannot access secrets</description>
+  </rule>
+
+  <!-- DEPLOY / HEALTH / SMOKE -->
+  <rule id="199060" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">deploy_passed</field>
+    <description>Jenkins: $(data.service) deployed successfully</description>
+  </rule>
+
+  <rule id="199061" level="7">
+    <if_sid>86600</if_sid>
+    <field name="event_type">deploy_failed</field>
+    <description>Jenkins: $(data.service) deployment failed</description>
+  </rule>
+
+  <rule id="199062" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">health_passed</field>
+    <description>Jenkins: $(data.service) health check passed</description>
+  </rule>
+
+  <rule id="199063" level="7">
+    <if_sid>86600</if_sid>
+    <field name="event_type">health_failed</field>
+    <description>Jenkins: $(data.service) health check failed</description>
+  </rule>
+
+  <rule id="199064" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">smoke_passed</field>
+    <description>Jenkins: $(data.service) smoke test passed</description>
+  </rule>
+
+  <rule id="199065" level="7">
+    <if_sid>86600</if_sid>
+    <field name="event_type">smoke_failed</field>
+    <description>Jenkins: $(data.service) smoke test failed</description>
+  </rule>
+
+</group>
