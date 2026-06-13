@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: nextcloud
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.nextcloud.replicas }}
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: nextcloud
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: nextcloud
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath }}
+        vault.hashicorp.com/agent-inject-file-config: {{ .Values.vault.secretFile }}
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{ "{{" }}- with secret "secret/data/next_cloud" -{{ "}}" }}
+          export POSTGRES_DB="{{ "{{" }} .Data.data.POSTGRES_DB {{ "}}" }}"
+          export POSTGRES_USER="{{ "{{" }} .Data.data.POSTGRES_USER {{ "}}" }}"
+          export POSTGRES_PASSWORD="{{ "{{" }} .Data.data.POSTGRES_PASSWORD {{ "}}" }}"
+          {{ "{{" }}- end {{ "}}" }}
+    spec:
+      restartPolicy: Always
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: nextcloud
+          image: {{ .Values.nextcloud.image.repository }}:{{ .Values.nextcloud.image.tag }}
+          imagePullPolicy: {{ .Values.nextcloud.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until [ -f /vault/secrets/config ]; do
+                echo "Waiting for Vault Agent..."
+                sleep 2
+              done
+              source /vault/secrets/config
+              export POSTGRES_HOST=nextcloud-postgres
+              export NEXTCLOUD_TRUSTED_DOMAINS="{{ .Values.nextcloud.trustedDomains }}"
+              exec /entrypoint.sh apache2-foreground
+          ports:
+            - containerPort: 80
+              name: http
+          startupProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+            initialDelaySeconds: {{ .Values.nextcloud.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nextcloud.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.nextcloud.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.nextcloud.startupProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+            initialDelaySeconds: {{ .Values.nextcloud.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nextcloud.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.nextcloud.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.nextcloud.readinessProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+            initialDelaySeconds: {{ .Values.nextcloud.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nextcloud.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.nextcloud.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.nextcloud.livenessProbe.failureThreshold }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              memory: {{ .Values.nextcloud.resources.requests.memory | quote }}
+              cpu: {{ .Values.nextcloud.resources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.nextcloud.resources.limits.memory | quote }}
+              cpu: {{ .Values.nextcloud.resources.limits.cpu | quote }}
+          volumeMounts:
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-data
