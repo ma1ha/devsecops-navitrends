@@ -75,3 +75,6 @@ mariadb:
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 3
+# Network Policies
+networkPolicy:
+  enabled: true

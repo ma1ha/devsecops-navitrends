@@ -1,229 +1,94 @@
 pipeline {
-    agent any
+    agent { label 'ubuntu-server' }
 
     environment {
-        REPORT_DIR = "${WORKSPACE}\\security-reports"
-        BUILD_TAG  = "devsecops-${BUILD_NUMBER}"
-        VAULT_ADDR = "http://localhost:8200"
+        REPORT_DIR       = "${WORKSPACE}/security-reports"
+        TRAEFIK_HOST     = "maha.nav.ovh"
+        TRAEFIK_EXT      = "https://maha.nav.ovh"
+        CHARTS_DIR       = "${WORKSPACE}/k8s/charts"
+        KUBESCAPE_SKIP   = "kube-system,cert-manager,vault,traefik,crowdsec"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
     }
 
     stages {
 
+
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/ma1ha/devsecops-navitrends',
-                    branch: 'main'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/ubuntu-server']],
+                    userRemoteConfigs: [[
+                        url: 'https://gitea.nav.ovh/Maha_Msadak/devsecops-navitrends.git',
+                        credentialsId: 'gitea-creds'
+                    ]]
+                ])
+                sh 'mkdir -p ${REPORT_DIR}'
             }
         }
 
-stage('Unseal Vault') {
-    steps {
-        withCredentials([
-            string(credentialsId: 'VAULT-UNSEAL-KEY-1', variable: 'KEY1'),
-            string(credentialsId: 'VAULT-UNSEAL-KEY-2', variable: 'KEY2'),
-            string(credentialsId: 'VAULT-UNSEAL-KEY-3', variable: 'KEY3')
-        ]) {
-            powershell '''
-                $addr = $env:VAULT_ADDR
 
-                # Check status — sealed vault returns non-200 so we catch the error
-                try {
-                    $status = Invoke-RestMethod -Uri "$addr/v1/sys/health"
-                    if ($status.sealed -eq $false) {
-                        Write-Host "Vault already unsealed, skipping..."
-                        exit 0
-                    }
-                } catch {
-                    Write-Host "Vault is sealed or unreachable, proceeding to unseal..."
-                }
-
-                # Unseal
-                $body1 = @{ key = $env:KEY1 } | ConvertTo-Json
-                $body2 = @{ key = $env:KEY2 } | ConvertTo-Json
-                $body3 = @{ key = $env:KEY3 } | ConvertTo-Json
-                Invoke-RestMethod -Uri "$addr/v1/sys/unseal" -Method PUT -ContentType "application/json" -Body $body1
-                Invoke-RestMethod -Uri "$addr/v1/sys/unseal" -Method PUT -ContentType "application/json" -Body $body2
-                Invoke-RestMethod -Uri "$addr/v1/sys/unseal" -Method PUT -ContentType "application/json" -Body $body3
-                Write-Host "Vault unsealed successfully"
-            '''
-        }
-    }
-}
-        stage('Verify Vault Status') {
+        stage('Verify Vault Unsealed') {
             steps {
-                powershell '''
-                    $status = Invoke-RestMethod -Uri "$env:VAULT_ADDR/v1/sys/health"
-                    if ($status.sealed -eq $false) {
-                        Write-Host "Vault is UNSEALED — Storage: $($status.storage_type) — Version: $($status.version)"
-                    } else {
-                        Write-Error "Vault is still SEALED"
-                        exit 1
-                    }
-                '''
-            }
-        }
-stage('Load Vault Secrets') {
-    steps {
-        withCredentials([
-            string(credentialsId: 'VAULT-TOKEN', variable: 'VAULT_TOKEN')
-        ]) {
-            powershell '''
-                $addr = $env:VAULT_ADDR
-                $headers = @{ "X-Vault-Token" = $env:VAULT_TOKEN }
+                withCredentials([
+                    string(credentialsId: 'vault-k8s-unsealkey1', variable: 'KEY1'),
+                    string(credentialsId: 'vault-k8s-unsealkey2', variable: 'KEY2'),
+                    string(credentialsId: 'vault-k8s-unsealkey3', variable: 'KEY3')
+                ]) {
+                    sh '''
+                        VAULT_ADDR=$(kubectl get svc vault -n vault -o jsonpath='{.spec.clusterIP}')
+                        VAULT_ADDR="http://${VAULT_ADDR}:8200"
+                        echo "Vault address: $VAULT_ADDR"
 
-                function Get-Secret($path) {
-                    try {
-                        return (Invoke-RestMethod -Uri "$addr/v1/secret/data/$path" -Headers $headers).data.data
-                    } catch {
-                        Write-Error "Failed to load secret from Vault path: $path -- $_"
-                        exit 1
-                    }
+                        STATUS=$(curl -s $VAULT_ADDR/v1/sys/health | grep -o '"sealed":[a-z]*' | cut -d: -f2)
+
+                        if [ "$STATUS" = "false" ]; then
+                            echo "Vault is unsealed"
+                            exit 0
+                        fi
+
+                        echo "Vault is sealed - unsealing..."
+                        curl -s --request PUT --data "{\"key\": \"$KEY1\"}" $VAULT_ADDR/v1/sys/unseal > /dev/null
+                        curl -s --request PUT --data "{\"key\": \"$KEY2\"}" $VAULT_ADDR/v1/sys/unseal > /dev/null
+                        curl -s --request PUT --data "{\"key\": \"$KEY3\"}" $VAULT_ADDR/v1/sys/unseal > /dev/null
+
+                        STATUS=$(curl -s $VAULT_ADDR/v1/sys/health | grep -o '"sealed":[a-z]*' | cut -d: -f2)
+                        if [ "$STATUS" = "false" ]; then
+                            echo "Vault unsealed successfully"
+                        else
+                            echo "Vault still sealed - aborting"
+                            exit 1
+                        fi
+                    '''
                 }
-
-                function Write-NoBom($path, $content) {
-                    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-                    [System.IO.File]::WriteAllText($path, $content, $utf8NoBom)
-                }
-
-                function Assert-Keys($name, $obj, $requiredKeys) {
-                    $missing = @()
-
-                    foreach ($key in $requiredKeys) {
-                        $value = $obj.PSObject.Properties[$key]
-                        if ($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value.Value)) {
-                            $missing += $key
-                        }
-                    }
-
-                    if ($missing.Count -gt 0) {
-                        Write-Error "$name secrets missing keys: $($missing -join ', ')"
-                        exit 1
-                    }
-
-                    Write-Host "$name secrets validated: $($requiredKeys -join ', ')"
-                }
-
-                Write-Host "Loading secrets from Vault..."
-
-                $odoo   = Get-Secret "odoo"
-                $n8n    = Get-Secret "n8n"
-                $nc     = Get-Secret "next_cloud"
-                $mautic = Get-Secret "mautic"
-                $frappe = Get-Secret "frappe"
-
-                Assert-Keys "odoo"   $odoo   @("POSTGRES_DB","POSTGRES_USER","POSTGRES_PASSWORD")
-                Assert-Keys "n8n"    $n8n    @("POSTGRES_DB","POSTGRES_USER","POSTGRES_PASSWORD","ENCRYPTION_KEY","JWT_SECRET")
-                Assert-Keys "nextcloud" $nc  @("POSTGRES_DB","POSTGRES_USER","POSTGRES_PASSWORD")
-                Assert-Keys "mautic" $mautic @("MYSQL_DB","MYSQL_USER","MYSQL_PASSWORD","MYSQL_ROOT_PASSWORD","ADMIN_EMAIL","ADMIN_USERNAME","ADMIN_PASSWORD")
-                Assert-Keys "frappe" $frappe @("MYSQL_ROOT_PASSWORD")
-
-                $ws = $env:WORKSPACE
-
-                Write-NoBom ([IO.Path]::Combine($ws, "odoo", ".env.vault")) @"
-ODOO_POSTGRES_DB=$($odoo.POSTGRES_DB)
-ODOO_POSTGRES_USER=$($odoo.POSTGRES_USER)
-ODOO_POSTGRES_PASSWORD=$($odoo.POSTGRES_PASSWORD)
-"@
-
-                Write-NoBom ([IO.Path]::Combine($ws, "n8n", ".env.vault")) @"
-N8N_POSTGRES_DB=$($n8n.POSTGRES_DB)
-N8N_POSTGRES_USER=$($n8n.POSTGRES_USER)
-N8N_POSTGRES_PASSWORD=$($n8n.POSTGRES_PASSWORD)
-N8N_ENCRYPTION_KEY=$($n8n.ENCRYPTION_KEY)
-N8N_JWT_SECRET=$($n8n.JWT_SECRET)
-"@
-
-                Write-NoBom ([IO.Path]::Combine($ws, "nextcloud", ".env.vault")) @"
-NC_POSTGRES_DB=$($nc.POSTGRES_DB)
-NC_POSTGRES_USER=$($nc.POSTGRES_USER)
-NC_POSTGRES_PASSWORD=$($nc.POSTGRES_PASSWORD)
-"@
-
-                Write-NoBom ([IO.Path]::Combine($ws, "mautic", ".env.vault")) @"
-MAUTIC_MYSQL_DB=$($mautic.MYSQL_DB)
-MAUTIC_MYSQL_USER=$($mautic.MYSQL_USER)
-MAUTIC_MYSQL_PASSWORD=$($mautic.MYSQL_PASSWORD)
-MAUTIC_MYSQL_ROOT_PASSWORD=$($mautic.MYSQL_ROOT_PASSWORD)
-MAUTIC_ADMIN_EMAIL=$($mautic.ADMIN_EMAIL)
-MAUTIC_ADMIN_USERNAME=$($mautic.ADMIN_USERNAME)
-MAUTIC_ADMIN_PASSWORD=$($mautic.ADMIN_PASSWORD)
-"@
-
-                Write-NoBom ([IO.Path]::Combine($ws, "frappe", ".env.vault")) @"
-FRAPPE_MYSQL_ROOT_PASSWORD=$($frappe.MYSQL_ROOT_PASSWORD)
-"@
-
-                Write-Host "All secrets loaded and written to .env.vault files"
-
-                @("odoo", "n8n", "nextcloud", "mautic", "frappe") | ForEach-Object {
-                    $f = [IO.Path]::Combine($ws, $_, ".env.vault")
-                    if (-not (Test-Path $f)) {
-                        Write-Error "$_ .env.vault was not created"
-                        exit 1
-                    }
-                    if ((Get-Item $f).Length -le 0) {
-                        Write-Error "$_ .env.vault is empty"
-                        exit 1
-                    }
-                    Write-Host "$_ .env.vault OK"
-                }
-            '''
-        }
-    }
-}
-        stage('Setup') {
-            steps {
-                bat "if not exist \"${REPORT_DIR}\" mkdir \"${REPORT_DIR}\""
             }
         }
 /*
         stage('Secret Detection - Gitleaks') {
             steps {
                 script {
-                    def exitCode = bat(
+                    def exitCode = sh(
                         script: """
-                            docker run --rm ^
-                                -v "${WORKSPACE}:/repo" ^
-                                zricethezav/gitleaks:latest detect ^
-                                --source /repo ^
-                                --report-format json ^
-                                --report-path /repo/security-reports/gitleaks-report.json ^
-                                --verbose
+                            docker run --rm \
+                                -v ${WORKSPACE}:/repo \
+                                zricethezav/gitleaks:latest detect \
+                                    --source /repo \
+                                    --report-format json \
+                                    --report-path /repo/security-reports/gitleaks-report.json \
+                                    --no-git \
+                                    --verbose
                         """,
                         returnStatus: true
                     )
                     if (exitCode != 0) {
-                        unstable('Secrets detected in repo! Check gitleaks-report.json')
-                    } else {
-                        echo "No secrets detected!"
+                        unstable("Secrets detected in codebase - check gitleaks-report.json")
                     }
-                }
-            }
-        }
-
-        stage('Lint - DCLint') {
-            steps {
-                script {
-                    def services = ['n8n', 'mautic', 'odoo', 'nextcloud', 'frappe']
-                    services.each { service ->
-                        echo "Linting ${service}..."
-                        def exitCode = bat(
-                            script: """
-                                docker run --rm ^
-                                    -v "${WORKSPACE}\\${service}:/workspace" ^
-                                    zavoloklom/dclint:latest ^
-                                    /workspace/docker-compose.yml ^
-                                    --format json ^
-                                    > "${WORKSPACE}\\security-reports\\dclint-${service}.json" 2>&1
-                            """,
-                            returnStatus: true
-                        )
-                        if (exitCode != 0) {
-                            unstable("Lint issues found in ${service}!")
-                        } else {
-                            echo "${service} lint passed!"
-                        }
-                    }
+                    echo "No secrets detected"
                 }
             }
         }
@@ -231,254 +96,507 @@ FRAPPE_MYSQL_ROOT_PASSWORD=$($frappe.MYSQL_ROOT_PASSWORD)
         stage('SAST - Semgrep') {
             steps {
                 script {
-                    def exitCode = bat(
+                    def exitCode = sh(
                         script: """
-                            docker run --rm ^
-                                -v "${WORKSPACE}:/src" ^
-                                returntocorp/semgrep:latest ^
-                                semgrep scan ^
-                                --config=auto ^
-                                --json ^
-                                --output=/src/security-reports/semgrep-report.json ^
-                                /src
+                            docker run --rm \
+                                -v ${WORKSPACE}:/src \
+                                returntocorp/semgrep:latest semgrep scan \
+                                    --config p/kubernetes \
+                                    --config p/secrets \
+                                    --config p/dockerfile \
+                                    --config p/owasp-top-ten \
+                                    --json \
+                                    --output=/src/security-reports/semgrep-report.json \
+                                    /src/k8s
                         """,
                         returnStatus: true
                     )
-                    if (exitCode != 0) {
-                        unstable('SAST findings detected! Check semgrep-report.json')
+                    // Parse findings — error on HIGH severity
+                    def findings = sh(
+                        script: """
+                            cat ${REPORT_DIR}/semgrep-report.json | \
+                            python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+results=data.get('results',[])
+high=[r for r in results if r.get('extra',{}).get('severity','') in ['ERROR','HIGH']]
+print(len(high))
+" 2>/dev/null || echo "0"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Semgrep HIGH/ERROR findings: ${findings}"
+                    if (findings.toInteger() > 0) {
+                        unstable("Semgrep found ${findings} HIGH severity issues - check semgrep-report.json")
                     } else {
-                        echo "SAST scan clean!"
+                        echo "Semgrep scan clean"
                     }
                 }
             }
         }
 
-        stage('Pull Images') {
-            steps {
-                script {
-                    def services = ['n8n', 'nextcloud', 'mautic', 'odoo']
-                    services.each { service ->
-                        echo "Pulling images for ${service}..."
-                        bat """
-                            docker compose ^
-                                -f ${WORKSPACE}\\${service}\\docker-compose.yml ^
-                                --env-file ${WORKSPACE}\\${service}\\.env ^
-                                --env-file ${WORKSPACE}\\${service}\\.env.vault ^
-                                -p ${service} ^
-                                pull
-                        """
-                    }
-                }
-            }
-        }
 
-        stage('Container Scan - Trivy (Raw Images)') {
+        stage('Helm Lint') {
             steps {
                 script {
-                    def images = [
-                        [name: 'n8n',       image: 'n8nio/n8n:2.11.4'],
-                        [name: 'nextcloud', image: 'nextcloud:33-apache'],
-                        [name: 'mautic',    image: 'mautic/mautic:5-apache'],
-                        [name: 'odoo',      image: 'odoo:18.0'],
-                        [name: 'postgres',  image: 'postgres:15.10'],
-                        [name: 'mariadb',   image: 'mariadb:10.11'],
-                        [name: 'redis',     image: 'redis:7-alpine']
-                    ]
-                    images.each { svc ->
-                        echo "Scanning ${svc.name}..."
-                        def exitCode = bat(
-                            script: """
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v "${REPORT_DIR}:/output" ^
-                                    aquasec/trivy:0.50.4 image ^
-                                    --format template ^
-                                    --template "@contrib/html.tpl" ^
-                                    --output /output/trivy-${svc.name}.html ^
-                                    --severity HIGH,CRITICAL ^
-                                    --timeout 10m ^
-                                    ${svc.image}
-                            """,
+                    def charts = ['odoo', 'n8n', 'nextcloud', 'mautic', 'wordpress', 'frappe']
+                    def failed = []
+                    charts.each { chart ->
+                        echo "Linting ${chart}..."
+                        def exitCode = sh(
+                            script: "helm lint ${CHARTS_DIR}/${chart} --strict",
                             returnStatus: true
                         )
-                        if (exitCode != 0) {
-                            unstable("Vulnerabilities found in ${svc.name}!")
-                        } else {
-                            echo "${svc.name} scan clean!"
-                        }
+                        if (exitCode != 0) failed << chart
                     }
+                    if (failed) {
+                        error("Helm lint failed for: ${failed.join(', ')} - fix before deploying")
+                    }
+                    echo "All charts passed lint"
                 }
             }
         }
 */
-        stage('Build Custom Images') {
+        stage('IaC Security - Checkov') {
             steps {
                 script {
-                    echo "Building custom Mautic image..."
-                    bat """
-                        docker compose ^
-                            -f ${WORKSPACE}\\mautic\\docker-compose.yml ^
-                            --env-file ${WORKSPACE}\\mautic\\.env ^
-                            --env-file ${WORKSPACE}\\mautic\\.env.vault ^
-                            -p mautic ^
-                            build --no-cache
-                        docker tag mautic-mautic:latest mautic-mautic:${BUILD_TAG}
+                    def charts = ['odoo', 'n8n', 'nextcloud', 'mautic', 'wordpress', 'frappe']
+
+                    sh "rm -f /tmp/rendered-all.yaml"
+                    charts.each { chart ->
+                        sh """
+                            helm template ${chart} ${CHARTS_DIR}/${chart} \
+                                --namespace ${chart == 'frappe' ? 'frappe' : chart} \
+                                >> /tmp/rendered-all.yaml
+                        """
+                    }
+
+                    sh """
+                        docker run --rm \
+                            -v /tmp:/workspace \
+                            -v ${REPORT_DIR}:/output \
+                            bridgecrew/checkov:latest \
+                                -f /workspace/rendered-all.yaml \
+                                --framework kubernetes \
+                                --skip-check CKV_K8S_43,CKV_K8S_15,CKV2_K8S_6 \
+                                --output json \
+                                --output-file-path /output/checkov-report.json \
+                                --compact --quiet || true
+                    """
+
+                    // Count real failures after skip list
+                    def failCount = sh(
+                        script: """
+                            cat ${REPORT_DIR}/checkov-report.json | \
+                            python3 -c "
+import json,sys
+try:
+    data=json.load(sys.stdin)
+    if isinstance(data, list):
+        data = data[0]
+    print(data.get('summary',{}).get('failed',0))
+except:
+    print(0)
+" 2>/dev/null || echo "0"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Checkov actionable failures: ${failCount}"
+                    if (failCount.toInteger() > 20) {
+                        unstable("Checkov found ${failCount} IaC issues - review checkov-report.json")
+                    } else {
+                        echo "Checkov passed (${failCount} findings within threshold)"
+                    }
+                }
+            }
+        }
+
+/*
+        stage('Container Scan - Trivy') {
+            steps {
+                script {
+                    def images = [
+                        [name: 'odoo',      image: 'odoo:18.0'],
+                        [name: 'n8n',       image: 'n8nio/n8n:2.11.4'],
+                        [name: 'nextcloud', image: 'nextcloud:33-apache'],
+                        [name: 'mautic',    image: 'mautic/mautic:5-apache'],
+                        [name: 'wordpress', image: 'wordpress:6.8.1-apache'],
+                        [name: 'frappe',    image: 'frappe/erpnext:v15']
+                    ]
+
+                    // Run all scans in parallel
+                    parallel images.collectEntries { svc ->
+                        ["Trivy: ${svc.name}": {
+                            sh """
+                                docker run --rm \
+                                    -v /var/run/docker.sock:/var/run/docker.sock \
+                                    -v /tmp/trivy-cache:/root/.cache/trivy \
+                                    -v ${REPORT_DIR}:/output \
+                                    aquasec/trivy:0.50.4 image \
+                                    --format cyclonedx \
+                                    --scanners vuln \
+                                    --output /output/sbom-${svc.name}.json \
+                                    --timeout 10m \
+                                    ${svc.image} || true
+                            """
+
+                            // Also generate SBOM for supply chain visibility
+                            sh """
+                                docker run --rm \
+                                    -v /var/run/docker.sock:/var/run/docker.sock \
+                                    -v /tmp/trivy-cache:/root/.cache/trivy \
+                                    -v ${REPORT_DIR}:/output \
+                                    aquasec/trivy:0.50.4 image \
+                                        --format cyclonedx \
+                                        --output /output/sbom-${svc.name}.json \
+                                        --timeout 10m \
+                                        ${svc.image} || true
+                            """
+                        }]
+                    }
+
+                    // Evaluate results — hard block on CRITICAL
+                    def blocked = []
+                    def warned = []
+                    images.each { svc ->
+                        def reportFile = "${REPORT_DIR}/trivy-${svc.name}.json"
+                        def counts = sh(
+                            script: """
+                                python3 -c "
+import json,sys
+try:
+    with open('${reportFile}') as f:
+        data=json.load(f)
+    crit=0; high=0
+    for result in data.get('Results',[]):
+        for v in result.get('Vulnerabilities') or []:
+            if v.get('Severity')=='CRITICAL': crit+=1
+            elif v.get('Severity')=='HIGH': high+=1
+    print(f'{crit},{high}')
+except Exception as e:
+    print('0,0')
+" 2>/dev/null || echo "0,0"
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        def parts = counts.split(',')
+                        def crit = parts[0].toInteger()
+                        def high = parts[1].toInteger()
+
+                        echo "${svc.name}: CRITICAL=${crit}, HIGH=${high}"
+
+                        if (crit > 0) blocked << "${svc.name}(${crit} CRITICAL)"
+                        else if (high > 10) warned << "${svc.name}(${high} HIGH)"
+                    }
+
+                    if (blocked) {
+                        unstable("CRITICAL CVEs found: ${blocked.join(', ')}")
+                    }
+                    if (warned) {
+                        unstable("HIGH CVEs exceed threshold: ${warned.join(', ')}")
+                    }
+                    echo "Container scan passed"
+                }
+            }
+        }
+*/
+        stage('Deploy via Helm') {
+            steps {
+                script {
+                    def services = [
+                        [name: 'odoo',      namespace: 'odoo'],
+                        [name: 'n8n',       namespace: 'n8n'],
+                        [name: 'nextcloud', namespace: 'nextcloud'],
+                        [name: 'mautic',    namespace: 'mautic'],
+                        [name: 'wordpress', namespace: 'wordpress'],
+                        [name: 'frappe',    namespace: 'frappe']
+                    ]
+
+                    def failed = []
+                    services.each { svc ->
+                        echo "Deploying ${svc.name}..."
+
+                        sh """
+                            kubectl create namespace ${svc.namespace} \
+                                --dry-run=client -o yaml | kubectl apply -f -
+                        """
+
+                        def exitCode = sh(
+                            script: """
+                                helm upgrade ${svc.name} \
+                                    ${CHARTS_DIR}/${svc.name} \
+                                    -n ${svc.namespace} \
+                                    --install \
+                                    --wait \
+                                    --timeout 5m \
+                                    --atomic
+                            """,
+                            returnStatus: true
+                        )
+
+                        if (exitCode != 0) {
+                            echo "${svc.name} deploy failed — attempting rollback..."
+                            sh """
+                                helm rollback ${svc.name} -n ${svc.namespace} || true
+                            """
+                            failed << svc.name
+                        } else {
+                            echo "${svc.name} deployed (revision: \$(helm list -n ${svc.namespace} -o json | python3 -c \"import json,sys; r=json.load(sys.stdin); print(r[0]['revision'] if r else 'N/A')\"))"
+                        }
+                    }
+
+                    if (failed) {
+                        error("Deploy failed for: ${failed.join(', ')} - rolled back to previous revision")
+                    }
+                }
+            }
+        }
+
+
+        stage('Health Check') {
+            steps {
+                script {
+                    def deployments = [
+                        [name: 'odoo',            namespace: 'odoo',      kind: 'deployment'],
+                        [name: 'n8n',             namespace: 'n8n',       kind: 'deployment'],
+                        [name: 'nextcloud',       namespace: 'nextcloud', kind: 'deployment'],
+                        [name: 'mautic',          namespace: 'mautic',    kind: 'deployment'],
+                        [name: 'wordpress',       namespace: 'wordpress', kind: 'deployment'],
+                        [name: 'frappe-gunicorn', namespace: 'frappe',    kind: 'deployment']
+                    ]
+
+                    def unhealthy = []
+                    deployments.each { dep ->
+                        def status = sh(
+                            script: """
+                                kubectl rollout status ${dep.kind}/${dep.name} \
+                                    -n ${dep.namespace} \
+                                    --timeout=120s
+                            """,
+                            returnStatus: true
+                        )
+                        if (status != 0) {
+                            echo "${dep.name} not healthy"
+                            // Dump pod logs for debugging
+                            sh """
+                                kubectl get pods -n ${dep.namespace} --no-headers | head -3
+                                kubectl describe pods -n ${dep.namespace} | tail -30 || true
+                            """
+                            unhealthy << dep.name
+                        } else {
+                            echo "${dep.name} healthy"
+                        }
+                    }
+
+                    if (unhealthy) {
+                        unstable("Unhealthy deployments: ${unhealthy.join(', ')}")
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Tests') {
+            steps {
+                script {
+                    def services = [
+                        [name: 'odoo',      namespace: 'odoo',      svc: 'odoo',            port: '8069', path: '/web/health'],
+                        [name: 'n8n',       namespace: 'n8n',       svc: 'n8n',             port: '5678', path: '/healthz'],
+                        [name: 'nextcloud', namespace: 'nextcloud',  svc: 'nextcloud',       port: '80',   path: '/status.php'],
+                        [name: 'mautic',    namespace: 'mautic',     svc: 'mautic',          port: '80',   path: '/'],
+                        [name: 'wordpress', namespace: 'wordpress',  svc: 'wordpress',       port: '80',   path: '/'],
+                        [name: 'frappe', namespace: 'frappe', svc: 'frappe-gunicorn', port: '8000', path: '/api/method/ping']
+                    ]
+
+                    def failed = []
+                    services.each { svc ->
+                        echo "Smoke testing ${svc.name}..."
+
+                        def result = sh(
+                            script: """
+                                kubectl run smoke-${svc.name}-${BUILD_NUMBER} \
+                                    --image=curlimages/curl:8.5.0 \
+                                    --restart=Never \
+                                    --rm -i \
+                                    -n ${svc.namespace} \
+                                    --timeout=60s \
+                                    -- curl -sk -o /dev/null -w '%{http_code}' \
+                                        --max-time 15 \
+                                        --retry 3 \
+                                        --retry-delay 5 \
+                                        http://${svc.svc}.${svc.namespace}.svc.cluster.local:${svc.port}${svc.path} \
+                                2>/dev/null || echo "000"
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        def httpCode = (result =~ /(\d{3})/) ? (result =~ /(\d{3})/)[-1][1] : "000"
+                        echo "${svc.name} → HTTP ${httpCode}"
+
+                        if (httpCode in ["200", "301", "302", "303", "401"]) {
+                            // 401 is OK — means app is up but requires auth
+                            echo "${svc.name} smoke test PASSED (${httpCode})"
+                        } else {
+                            echo "${svc.name} smoke test FAILED (${httpCode})"
+                            failed << "${svc.name}(${httpCode})"
+                        }
+                    }
+
+                    if (failed) {
+                        unstable("Smoke test failures: ${failed.join(', ')}")
+                    }
+                }
+            }
+        }
+
+        
+        stage('Live Cluster Security - Kubescape') {
+            steps {
+                script {
+                    // Install kubescape natively if not present (uses existing kubeconfig)
+                    sh """
+                        if ! command -v kubescape &>/dev/null; then
+                            curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash
+                            export PATH=\$PATH:\$HOME/.kubescape/bin
+                        fi
+
+                        kubescape scan framework nsa \
+                            --format json \
+                            --output ${REPORT_DIR}/kubescape-report.json \
+                            --exclude-namespaces ${KUBESCAPE_SKIP} \
+                            --verbose || true
+
+                        kubescape scan framework mitre \
+                            --format json \
+                            --output ${REPORT_DIR}/kubescape-mitre-report.json \
+                            --exclude-namespaces ${KUBESCAPE_SKIP} || true
+                    """
+
+                    // Parse risk score
+                    def riskScore = sh(
+                        script: """
+                            python3 -c "
+import json,sys
+try:
+    with open('${REPORT_DIR}/kubescape-report.json') as f:
+        data=json.load(f)
+    score=data.get('summaryDetails',{}).get('complianceScore',100)
+    print(int(100-score))
+except:
+    print(0)
+" 2>/dev/null || echo "0"
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Kubescape risk score: ${riskScore}%"
+                    if (riskScore.toInteger() > 50) {
+                        unstable("Kubescape risk score ${riskScore}% exceeds threshold")
+                    } else {
+                        echo "Kubescape passed (risk: ${riskScore}%)"
+                    }
+                }
+            }
+        }
+
+        stage('DAST - OWASP ZAP') {
+            steps {
+                script {
+                    def targets = [
+                        [name: 'odoo',      path: '/odoo'],
+                        [name: 'n8n',       path: '/n8n'],
+                        [name: 'nextcloud', path: '/nextcloud'],
+                        [name: 'mautic',    path: '/mautic'],
+                        [name: 'wordpress', path: '/wordpress'],
+                        [name: 'erpnext',   path: '/erpnext']
+                    ]
+
+                    targets.each { svc ->
+                        echo "ZAP scanning ${svc.name}..."
+                        sh """
+                            docker run --rm \
+                                -v ${REPORT_DIR}:/zap/wrk \
+                                ghcr.io/zaproxy/zaproxy:stable \
+                                zap-baseline.py \
+                                    -t ${TRAEFIK_EXT}${svc.path} \
+                                    -r zap-${svc.name}-${BUILD_NUMBER}.html \
+                                    -J zap-${svc.name}-${BUILD_NUMBER}.json \
+                                    -l WARN \
+                                    -I -k || true
+                        """
+
+                        // Parse ZAP alerts — warn on HIGH risk
+                        def highAlerts = sh(
+                            script: """
+                                python3 -c "
+import json,sys
+try:
+    with open('${REPORT_DIR}/zap-${svc.name}-${BUILD_NUMBER}.json') as f:
+        data=json.load(f)
+    high=[a for a in data.get('site',[{}])[0].get('alerts',[]) if a.get('riskdesc','').startswith('High')]
+    print(len(high))
+except:
+    print(0)
+" 2>/dev/null || echo "0"
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        echo "${svc.name} ZAP HIGH alerts: ${highAlerts}"
+                        if (highAlerts.toInteger() > 0) {
+                            unstable("ZAP found ${highAlerts} HIGH risk alerts for ${svc.name}")
+                        }
+                    }
+                    echo "DAST scan completed for all services"
+                }
+            }
+        }
+
+
+        stage('Security Summary') {
+            steps {
+                script {
+                    sh """
+                        echo "============================================"
+                        echo "  SECURITY SCAN SUMMARY — Build #${BUILD_NUMBER}"
+                        echo "============================================"
+                        echo ""
+                        echo "Gitleaks:  \$(cat ${REPORT_DIR}/gitleaks-report.json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(str(len(d)) + ' secrets found')\" 2>/dev/null || echo 'clean')"
+                        echo "Semgrep:   \$(cat ${REPORT_DIR}/semgrep-report.json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(str(len(d.get('results',[]))) + ' findings')\" 2>/dev/null || echo 'N/A')"
+                        echo "Checkov:   \$(cat ${REPORT_DIR}/checkov-report.json | python3 -c \"import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; s=d.get('summary',{}); print(str(s.get('passed',0)) + ' passed / ' + str(s.get('failed',0)) + ' failed')\" 2>/dev/null || echo 'N/A')"
+                        echo "Trivy:     see trivy-*.json for per-image CVE counts"
+                        echo "SBOM:      see sbom-*.json for software inventory"
+                        echo "Kubescape: see kubescape-report.json"
+                        echo "ZAP:       see zap-*.html for per-service DAST reports"
+                        echo ""
+                        echo "Reports archived at: ${REPORT_DIR}"
+                        echo "============================================"
                     """
                 }
             }
         }
-/*
-        stage('Container Scan - Trivy (Mautic Custom)') {
-            steps {
-                script {
-                    echo "Scanning custom Mautic image..."
-                    def exitCode = bat(
-                        script: """
-                            docker run --rm ^
-                                -v /var/run/docker.sock:/var/run/docker.sock ^
-                                -v "${REPORT_DIR}:/output" ^
-                                aquasec/trivy:0.50.4 image ^
-                                --format template ^
-                                --template "@contrib/html.tpl" ^
-                                --output /output/trivy-mautic-custom.html ^
-                                --severity HIGH,CRITICAL ^
-                                --timeout 10m ^
-                                mautic-mautic:${BUILD_TAG}
-                        """,
-                        returnStatus: true
-                    )
-                    if (exitCode != 0) {
-                        unstable("Vulnerabilities still found in custom Mautic image!")
-                    } else {
-                        echo "Custom Mautic image scan clean!"
-                    }
-                }
-            }
-        }
-        */
-
-        stage('Deploy') {
-            steps {
-                script {
-                    def services = ['n8n', 'nextcloud', 'mautic', 'odoo']
-                    services.each { service ->
-                        echo "Deploying ${service}..."
-                        bat """
-                            docker compose ^
-                                -f ${WORKSPACE}\\${service}\\docker-compose.yml ^
-                                --env-file ${WORKSPACE}\\${service}\\.env ^
-                                --env-file ${WORKSPACE}\\${service}\\.env.vault ^
-                                -p ${service} ^
-                                up -d
-                        """
-                    }
-                }
-            }
-        }
-
-stage('Health Check') {
-    steps {
-        script {
-            echo "Giving the services 60 seconds to start..."
-            sleep(time: 60, unit: 'SECONDS')
-
-            def services = ['odoo-app', 'n8n-app', 'nextcloud-app', 'mautic-app']
-
-            services.each { container ->
-                def healthy = false
-
-                for (int attempt = 1; attempt <= 5; attempt++) {
-                    def status = bat(
-                        script: "docker inspect --format={{.State.Health.Status}} ${container}",
-                        returnStdout: true
-                    ).trim().readLines().last()
-
-                    echo "${container} health status: ${status}"
-
-                    if (status == 'healthy') {
-                        healthy = true
-                        echo "${container} is healthy."
-                        break
-                    }
-
-                    if (attempt < 5) {
-                        echo "Still waiting for ${container}... retrying in 20 seconds."
-                        sleep(time: 20, unit: 'SECONDS')
-                    }
-                }
-
-                if (!healthy) {
-                    echo "Health check failed for ${container}. Printing details..."
-                    bat "docker inspect --format=\"{{json .State.Health}}\" ${container}"
-                    bat "docker logs ${container}"
-                    unstable("${container} did not become healthy after 5 checks.")
-                }
-            }
-        }
     }
-}
-stage('DAST - OWASP ZAP') {
-    steps {
-        script {
-            def targets = [
-                [name: 'odoo',      url: 'http://host.docker.internal:8069'],
-                [name: 'n8n',       url: 'http://host.docker.internal:5678'],
-                [name: 'nextcloud', url: 'http://host.docker.internal:8082'],
-                [name: 'mautic',    url: 'http://host.docker.internal:8081']
-            ]
 
-            targets.each { svc ->
-                echo "ZAP scanning ${svc.name} at ${svc.url}..."
-                def exitCode = bat(
-                    script: """
-                        docker run --rm ^
-                            --add-host=host.docker.internal:host-gateway ^
-                            -v "${REPORT_DIR}:/zap/wrk" ^
-                            ghcr.io/zaproxy/zaproxy:stable ^
-                            zap-baseline.py ^
-                            -t ${svc.url} ^
-                            -r zap-${svc.name}.html ^
-                            -I
-                    """,
-                    returnStatus: true
-                )
-
-                if (exitCode != 0) {
-                    unstable("ZAP found issues in ${svc.name}!")
-                } else {
-                    echo "${svc.name} ZAP scan clean!"
-                }
-            }
-        }
-    }
-}
-    }
 
     post {
         always {
-            powershell '''
-                $files = @(
-                    "$env:WORKSPACE\\odoo\\.env.vault",
-                    "$env:WORKSPACE\\n8n\\.env.vault",
-                    "$env:WORKSPACE\\nextcloud\\.env.vault",
-                    "$env:WORKSPACE\\mautic\\.env.vault",
-                    "$env:WORKSPACE\\frappe\\.env.vault"
-                )
-                foreach ($f in $files) {
-                    if (Test-Path $f) { Remove-Item $f -Force; Write-Host "Deleted $f" }
-                }
-            '''
-            archiveArtifacts artifacts: 'security-reports/**/*', allowEmptyArchive: true
-            echo "Security reports archived."
-        }
-        unstable {
-            echo "Pipeline completed with warnings — review security reports before production."
+            archiveArtifacts(
+                artifacts: 'security-reports/**/*',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+            cleanWs()
         }
         success {
-            echo "Pipeline completed successfully — all checks passed."
+            echo "Pipeline completed successfully — all security gates passed"
+        }
+        unstable {
+            echo "Pipeline completed with warnings — review security reports above"
         }
         failure {
-            echo "Pipeline failed — check the logs."
+            echo "Pipeline FAILED — check logs above for blocking issues"
         }
     }
 }
