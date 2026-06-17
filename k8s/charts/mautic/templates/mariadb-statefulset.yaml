@@ -37,6 +37,8 @@ spec:
         runAsUser: {{ .Values.mariadb.securityContext.runAsUser }}
         runAsGroup: {{ .Values.mariadb.securityContext.runAsGroup }}
         fsGroup: {{ .Values.mariadb.securityContext.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mariadb
           image: {{ .Values.mariadb.image.repository }}:{{ .Values.mariadb.image.tag }}

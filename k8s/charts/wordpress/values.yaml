@@ -17,7 +17,7 @@ wordpress:
   resources:
     requests:
       memory: "256Mi"
-      cpu: "150m"
+      cpu: "10m"
     limits:
       memory: "512Mi"
       cpu: "500m"
@@ -53,7 +53,7 @@ mariadb:
   resources:
     requests:
       memory: "256Mi"
-      cpu: "100m"
+      cpu: "10m"
     limits:
       memory: "512Mi"
       cpu: "500m"

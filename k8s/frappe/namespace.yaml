@@ -5,3 +5,4 @@ metadata:
   labels:
     app.kubernetes.io/name: frappe
     environment: production
+    role: navitrends-service 

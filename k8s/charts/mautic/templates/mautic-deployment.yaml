@@ -31,6 +31,11 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: false
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mautic
           image: {{ .Values.mautic.image.repository }}:{{ .Values.mautic.image.tag }}
@@ -74,6 +79,10 @@ spec:
               exec /entrypoint.sh
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               memory: {{ .Values.mautic.resources.requests.memory | quote }}

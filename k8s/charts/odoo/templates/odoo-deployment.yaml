@@ -36,9 +36,12 @@ spec:
       restartPolicy: Always
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         fsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: odoo
           image: {{ .Values.odoo.image.repository }}:{{ .Values.odoo.image.tag }}
