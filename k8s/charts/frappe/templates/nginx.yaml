@@ -39,7 +39,6 @@ spec:
         app.kubernetes.io/component: nginx
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         seccompProfile:
           type: RuntimeDefault

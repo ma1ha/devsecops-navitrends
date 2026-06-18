@@ -37,7 +37,6 @@ spec:
         app.kubernetes.io/component: socketio
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -141,7 +140,6 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         seccompProfile:
           type: RuntimeDefault

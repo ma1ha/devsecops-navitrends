@@ -46,7 +46,6 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.wordpress }}
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         seccompProfile:

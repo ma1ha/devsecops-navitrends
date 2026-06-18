@@ -44,6 +44,10 @@ spec:
             capabilities:
               drop:
                 - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
           resources:
             requests:
               memory: "64Mi"

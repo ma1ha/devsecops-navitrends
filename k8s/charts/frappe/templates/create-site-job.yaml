@@ -29,7 +29,6 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       restartPolicy: OnFailure
       securityContext:
         seccompProfile:

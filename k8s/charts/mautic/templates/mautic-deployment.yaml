@@ -31,7 +31,6 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         seccompProfile:

@@ -33,7 +33,6 @@ spec:
           {{ "{{" }}- end {{ "}}" }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.mariadb }}
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         seccompProfile:

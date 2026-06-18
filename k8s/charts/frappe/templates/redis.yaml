@@ -36,7 +36,6 @@ spec:
         app.kubernetes.io/component: redis-cache
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -128,7 +127,6 @@ spec:
         app.kubernetes.io/component: redis-queue
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 999

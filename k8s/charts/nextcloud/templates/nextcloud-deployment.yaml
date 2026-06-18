@@ -36,7 +36,6 @@ spec:
       restartPolicy: Always
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 30
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         seccompProfile:
@@ -90,6 +89,11 @@ spec:
             capabilities:
               drop:
                 - ALL
+              add:
+                - SETGID
+                - SETUID
+                - CHOWN
+                - DAC_OVERRIDE
           resources:
             requests:
               memory: {{ .Values.nextcloud.resources.requests.memory | quote }}

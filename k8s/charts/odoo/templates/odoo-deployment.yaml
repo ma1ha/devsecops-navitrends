@@ -36,7 +36,6 @@ spec:
       restartPolicy: Always
       serviceAccountName: {{ .Values.serviceAccount.name }}
       terminationGracePeriodSeconds: 30
-      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: false
         fsGroup: 0
