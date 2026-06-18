@@ -102,6 +102,4 @@ persistence:
   logs:
     size: 2Gi
     storageClass: local-path
-# Network Policies
-networkPolicy:
-  enabled: true
+    

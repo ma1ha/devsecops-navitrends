@@ -63,11 +63,8 @@ spec:
               name: postgres
           
           startupProbe:
-            exec:
-              command:
-              - /bin/sh
-              - -c
-              - pg_isready -U $POSTGRES_USER
+            tcpSocket:
+              port: 5432
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
@@ -75,22 +72,16 @@ spec:
             successThreshold: 1
           
           readinessProbe:
-            exec:
-              command:
-              - /bin/sh
-              - -c
-              - pg_isready -U $POSTGRES_USER
+            tcpSocket:
+              port: 5432
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           
           livenessProbe:
-            exec:
-              command:
-              - /bin/sh
-              - -c
-              - pg_isready -U $POSTGRES_USER
+            tcpSocket:
+              port: 5432
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 5

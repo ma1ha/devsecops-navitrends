@@ -1,151 +1,194 @@
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  namespace: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: mariadb
+spec:
+  clusterIP: None   # headless - StatefulSet DNS: mariadb-0.mariadb.wordpress.svc.cluster.local
+  selector:
+    app.kubernetes.io/component: mariadb
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: wordpress-db
+  name: mariadb
   namespace: wordpress
   labels:
-    app: wordpress-db
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: mariadb
 spec:
-  serviceName: wordpress-db
+  serviceName: mariadb
   replicas: 1
   selector:
     matchLabels:
-      app: wordpress-db
-  
+      app.kubernetes.io/component: mariadb
   template:
     metadata:
       labels:
-        app: wordpress-db
+        app.kubernetes.io/name: wordpress
+        app.kubernetes.io/component: mariadb
       annotations:
-        # Vault Agent Sidecar Injection
+        # ── Vault Agent sidecar ─────────────────────────────────────────────
         vault.hashicorp.com/agent-inject: "true"
         vault.hashicorp.com/role: "wordpress"
-        vault.hashicorp.com/agent-inject-secret-db: "secret/wordpress"
-        vault.hashicorp.com/agent-inject-file-db: "database-config"
-        vault.hashicorp.com/agent-inject-template-db: |
-          {{- with secret "secret/wordpress" -}}
-          export MYSQL_DATABASE="{{ .Data.data.WORDPRESS_DB_NAME }}"
-          export MYSQL_USER="{{ .Data.data.WORDPRESS_DB_USER }}"
-          export MYSQL_PASSWORD="{{ .Data.data.WORDPRESS_DB_PASSWORD }}"
-          export MYSQL_ROOT_PASSWORD="{{ .Data.data.WORDPRESS_DB_ROOT_PASSWORD }}"
+        vault.hashicorp.com/agent-pre-populate-only: "false"
+        vault.hashicorp.com/agent-init-first: "true"
+
+        # Render secrets as shell-sourceable env file
+        vault.hashicorp.com/agent-inject-secret-db.env: "secret/data/wordpress"
+        vault.hashicorp.com/agent-inject-template-db.env: |
+          {{- with secret "secret/data/wordpress" -}}
+          export MARIADB_ROOT_PASSWORD="{{ .Data.data.WORDPRESS_DB_ROOT_PASSWORD }}"
+          export MARIADB_DATABASE="{{ .Data.data.WORDPRESS_DB_NAME }}"
+          export MARIADB_USER="{{ .Data.data.WORDPRESS_DB_USER }}"
+          export MARIADB_PASSWORD="{{ .Data.data.WORDPRESS_DB_PASSWORD }}"
           {{- end }}
-    
+
     spec:
-      serviceAccountName: wordpress
-      terminationGracePeriodSeconds: 30
+      serviceAccountName: mariadb
+      automountServiceAccountToken: true
+
+      # ── Security context (pod level) ───────────────────────────────────────
       securityContext:
-        runAsNonRoot: false
-        fsGroup: 999
-      
+        runAsNonRoot: false   # MariaDB needs root internally to drop to mysql user
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ── Init: wait for Vault secrets file to be non-empty ─────────────────
+      initContainers:
+        - name: wait-for-vault
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Vault secrets..."
+              until [ -s /vault/secrets/db.env ]; do
+                echo "  /vault/secrets/db.env not ready yet, sleeping..."
+                sleep 2
+              done
+              echo "Vault secrets ready."
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
       containers:
         - name: mariadb
-          image: mariadb:11.3
+          image: mariadb:11.4
           imagePullPolicy: IfNotPresent
-          
-          # CRITICAL: Wait for Vault, source env vars, then start DB
+
+          # Source vault secrets then exec the real entrypoint
           command:
-            - /bin/bash
+            - bash
             - -c
             - |
               set -e
-              echo "🔐 Waiting for Vault Agent to inject secrets..."
-              until [ -f /vault/secrets/database-config ]; do
-                echo "   Waiting for /vault/secrets/database-config..."
-                sleep 2
-              done
-              
-              echo "🔐 Loading secrets from Vault..."
-              source /vault/secrets/database-config
-              
-              echo "🗄️  Starting MariaDB with credentials from Vault..."
-              exec docker-entrypoint.sh \
-                --local-infile=0 \
-                --symbolic-links=0 \
-                --skip-show-database \
-                --character-set-server=utf8mb4 \
-                --collation-server=utf8mb4_unicode_ci \
-                --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION \
-                --slow-query-log=1 \
-                --long-query-time=2 \
-                --max-allowed-packet=64M \
-                --innodb-file-per-table=1
-          
-          ports:
-            - containerPort: 3306
-              name: mariadb
-          
-          # Startup probe: give DB 30 seconds to initialize
-          startupProbe:
-            tcpSocket:
-              port: 3306
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 30
-          
-          # Readiness probe: check if DB is accepting connections
-          readinessProbe:
-            tcpSocket:
-              port: 3306
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
-          # Liveness probe: keep it running
-          livenessProbe:
-            tcpSocket:
-              port: 3306
-            initialDelaySeconds: 60
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 5
-          
+              echo "Sourcing Vault secrets..."
+              source /vault/secrets/db.env
+              echo "Starting MariaDB..."
+              exec docker-entrypoint.sh mariadbd
+
+          # ── Security context (container level) ──────────────────────────
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
             capabilities:
-              drop: [ALL]
-              add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE]
-          
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+            seccompProfile:
+              type: RuntimeDefault
+
+          ports:
+            - name: mysql
+              containerPort: 3306
+              protocol: TCP
+
+          # ── Resource limits ──────────────────────────────────────────────
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "500m"
+              cpu: 100m
+              memory: 256Mi
             limits:
-              memory: "512Mi"
-              cpu: "1000m"
-          
+              cpu: 500m
+              memory: 512Mi
+
+          # ── Health probes ────────────────────────────────────────────────
+          startupProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - |
+                  source /vault/secrets/db.env
+                  mariadb-admin ping -u root -p"${MARIADB_ROOT_PASSWORD}" --silent
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 18   # 3 min total startup budget
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - |
+                  source /vault/secrets/db.env
+                  mariadb-admin ping -u root -p"${MARIADB_ROOT_PASSWORD}" --silent
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 5
+
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - |
+                  source /vault/secrets/db.env
+                  mariadb-admin ping -u root -p"${MARIADB_ROOT_PASSWORD}" --silent
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            successThreshold: 1
+            timeoutSeconds: 10
+
           volumeMounts:
-            - name: wordpress-db-data
+            - name: mariadb-data
               mountPath: /var/lib/mysql
-  
-  # Persistent storage for database
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true
+
+      volumes:
+        - name: vault-secrets
+          emptyDir:
+            medium: Memory   # secrets never touch disk
+
   volumeClaimTemplates:
     - metadata:
-        name: wordpress-db-data
+        name: mariadb-data
+        labels:
+          app.kubernetes.io/component: mariadb
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: local-path
         resources:
           requests:
-            storage: 20Gi
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: wordpress-db
-  namespace: wordpress
-  labels:
-    app: wordpress-db
-spec:
-  # Headless service for StatefulSet
-  clusterIP: None
-  selector:
-    app: wordpress-db
-  ports:
-    - port: 3306
-      targetPort: 3306
-      name: mariadb
+            storage: 5Gi

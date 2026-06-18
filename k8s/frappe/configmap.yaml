@@ -6,8 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: frappe
 data:
-  # Written to sites/ shared volume by create-site Job
-  # All other pods read this file to know DB/Redis endpoints
+
   common_site_config.json: |
     {
       "db_host": "frappe-db",

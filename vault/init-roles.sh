@@ -2,7 +2,7 @@
 
 echo "Creating Vault roles..."
 
-SERVICES=("odoo" "n8n" "nextcloud" "mautic" "frappe" "wazuh" "jenkins")
+SERVICES=("odoo" "n8n" "nextcloud" "mautic" "frappe" "wazuh" "jenkins" "wordpress")
 
 for SERVICE in "${SERVICES[@]}"; do
   kubectl exec -n vault vault-0 -- vault write auth/kubernetes/role/$SERVICE \

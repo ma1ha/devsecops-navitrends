@@ -1,6 +1,5 @@
 ---
-# frappe-sites: shared by gunicorn, workers, scheduler, socketio, nginx
-# Contains site config, installed apps, uploaded files
+
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -16,7 +15,6 @@ spec:
       storage: 10Gi
 
 ---
-# frappe-logs: shared logs volume
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -4,3 +4,4 @@ metadata:
   name: odoo
   labels:
     name: odoo
+    role: navitrends-service 

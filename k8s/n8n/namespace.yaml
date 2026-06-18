@@ -4,3 +4,4 @@ metadata:
   name: n8n
   labels:
     name: n8n
+    role: navitrends-service 

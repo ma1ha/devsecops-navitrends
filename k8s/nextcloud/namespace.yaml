@@ -4,3 +4,4 @@ metadata:
   name: nextcloud
   labels:
     name: nextcloud
+    role: navitrends-service 

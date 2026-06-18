@@ -81,6 +81,27 @@ spec:
 
       # ── Init: explicit gate so WordPress never starts before secrets exist ─
       initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Fixing /var/www/html ownership..."
+              chown -R 33:33 /var/www/html
+              chmod 755 /var/www/html
+              echo "Done."
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          volumeMounts:
+            - name: wordpress-data
+              mountPath: /var/www/html
+
         - name: wait-for-vault
           image: busybox:1.36
           command:

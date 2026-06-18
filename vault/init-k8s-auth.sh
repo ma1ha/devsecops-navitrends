@@ -1,5 +1,4 @@
 #!/bin/bash
-# Run this after every Vault pod restart to restore k8s auth connectivity
 
 echo "Configuring Kubernetes auth..."
 

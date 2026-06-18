@@ -4,3 +4,4 @@ metadata:
   name: mautic
   labels:
     name: mautic
+    role: navitrends-service 
