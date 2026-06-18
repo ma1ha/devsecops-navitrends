@@ -47,7 +47,7 @@ controller:
         resources: ["pods", "pods/log", "services", "endpoints", "configmaps", "secrets", "serviceaccounts", "persistentvolumeclaims", "events", "replicationcontrollers"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       - apiGroups: ["apps"]
-        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets", "controllerrevisions"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       - apiGroups: ["batch"]
         resources: ["jobs", "cronjobs"]
@@ -88,3 +88,17 @@ notifications:
 
 dex:
   enabled: false
+
+server:
+  config:
+    resource.exclusions: |
+      - apiGroups:
+        - traefik.io
+        - traefik.containo.us
+        - cilium.io
+        - cert-manager.io
+        - acme.cert-manager.io
+        kinds:
+        - "*"
+        clusters:
+        - "*"
