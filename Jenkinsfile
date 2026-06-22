@@ -445,58 +445,60 @@ print(ok[-1] if ok else 0)
             }
         }
 
-        stage('Smoke Tests') {
-            steps {
-                script {
-                    def services = [
-                        [name: 'odoo',      namespace: 'odoo',      svc: 'odoo',           port: '8069', path: '/web/health'],
-                        [name: 'n8n',       namespace: 'n8n',       svc: 'n8n',            port: '5678', path: '/healthz'],
-                        [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud', port: '80', path: '/index.php/login'],
-                        [name: 'mautic',    namespace: 'mautic',    svc: 'mautic',          port: '80',   path: '/'],
-                        [name: 'wordpress', namespace: 'wordpress', svc: 'wordpress',       port: '80',   path: '/'],
-                        [name: 'frappe',    namespace: 'frappe',    svc: 'frappe-gunicorn', port: '8000', path: '/api/method/ping']
-                    ]
+       stage('Smoke Tests') {
+    steps {
+        script {
+            def services = [
+                [name: 'odoo',      namespace: 'odoo',      svc: 'odoo',           port: '8069', path: '/web/health',        label: 'odoo'],
+                [name: 'n8n',       namespace: 'n8n',       svc: 'n8n',            port: '5678', path: '/healthz',            label: 'n8n'],
+                [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud',      port: '80',   path: '/',                   label: 'nextcloud'],
+                [name: 'mautic',    namespace: 'mautic',    svc: 'mautic',         port: '80',   path: '/',                   label: 'mautic'],
+                [name: 'wordpress', namespace: 'wordpress', svc: 'wordpress',      port: '80',   path: '/',                   label: 'wordpress'],
+                [name: 'frappe',    namespace: 'frappe',    svc: 'frappe-gunicorn',port: '8000', path: '/api/method/ping',    label: 'frappe']
+            ]
 
-                    def failed = []
+            def failed = []
 
-                    services.each { svc ->
-                        def rawOutput = sh(
-                            script: """
-                                kubectl run smoke-${svc.name}-${BUILD_NUMBER} \
-                                    --image=curlimages/curl:8.5.0 \
-                                    --restart=Never \
-                                    --rm -i \
-                                    -n ${svc.namespace} \
-                                    --timeout=60s \
-                                    -- curl -sk -o /dev/null -w '%{http_code}' \
-                                        --max-time 15 \
-                                        --retry 3 \
-                                        --retry-delay 5 \
-                                        http://${svc.svc}.${svc.namespace}.svc.cluster.local:${svc.port}${svc.path} \
-                                2>/dev/null || echo "000"
-                            """,
-                            returnStdout: true
-                        ).trim()
+            services.each { svc ->
+                def rawOutput = sh(
+                    script: """
+                        kubectl run smoke-${svc.name}-${BUILD_NUMBER} \
+                            --image=curlimages/curl:8.5.0 \
+                            --restart=Never \
+                            --rm -i \
+                            -n ${svc.namespace} \
+                            --timeout=60s \
+                            --labels="app.kubernetes.io/component=${svc.label}" \
+                            -- curl -skL -o /dev/null -w '%{http_code}' \
+                                --max-time 15 \
+                                --retry 3 \
+                                --retry-delay 5 \
+                                --max-redirs 3 \
+                                http://${svc.svc}.${svc.namespace}.svc.cluster.local:${svc.port}${svc.path} \
+                        2>/dev/null || echo "000"
+                    """,
+                    returnStdout: true
+                ).trim()
 
-                        def matcher  = (rawOutput =~ /(\d{3})/)
-                        def httpCode = matcher ? matcher[-1][1] : "000"
+                def matcher  = (rawOutput =~ /(\d{3})/)
+                def httpCode = matcher ? matcher[-1][1] : "000"
 
-                        echo "${svc.name} → HTTP ${httpCode}"
+                echo "${svc.name} → HTTP ${httpCode}"
 
-                        if (httpCode in ['200', '301', '302', '303', '401']) {
-                            echo "${svc.name} smoke test PASSED"
-                        } else {
-                            echo "${svc.name} smoke test FAILED (${httpCode})"
-                            failed << "${svc.name}(${httpCode})"
-                        }
-                    }
-
-                    if (failed) {
-                        unstable("Smoke test failures: ${failed.join(', ')}")
-                    }
+                if (httpCode in ['200', '301', '302', '303', '401']) {
+                    echo "${svc.name} smoke test PASSED"
+                } else {
+                    echo "${svc.name} smoke test FAILED (${httpCode})"
+                    failed << "${svc.name}(${httpCode})"
                 }
             }
+
+            if (failed) {
+                unstable("Smoke test failures: ${failed.join(', ')}")
+            }
         }
+    }
+}
 
         stage('Live Cluster Security - Kubescape') {
             steps {
