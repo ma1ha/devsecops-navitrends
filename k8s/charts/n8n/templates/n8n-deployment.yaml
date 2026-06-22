@@ -70,8 +70,9 @@ spec:
               value: "5678"
             - name: N8N_WEBHOOK_URL
               value: {{ .Values.n8n.webhookUrl | quote }}
-            - name: WEBHOOK_URL
-              value: {{ .Values.n8n.webhookUrl | quote }}
+            - name: N8N_PATH
+              value: "/n8n/"
+          
             - name: GENERIC_TIMEZONE
               value: {{ .Values.n8n.timezone | quote }}
             - name: N8N_METRICS

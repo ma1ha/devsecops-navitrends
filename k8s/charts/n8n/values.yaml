@@ -16,8 +16,8 @@ n8n:
 
   replicas: 1
 
-  host: "n8n.maha.nav.ovh"
-  webhookUrl: "https://n8n.maha.nav.ovh/"
+  host: "maha.nav.ovh"
+  webhookUrl: "https://maha.nav.ovh/n8n/"
   timezone: "Europe/Paris"
 
   db:

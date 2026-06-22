@@ -40,7 +40,7 @@ spec:
             - name: MAUTIC_INSTALL_FROM_CLI
               value: "true"
             - name: MAUTIC_SITE_URL
-              value: "https://mautic.navitrends-maha.duckdns.org"
+              value: "https://maha.nav.ovh/mautic"
             - name: MAUTIC_MAILER_FROM_NAME
               value: "Mautic"
             - name: MAUTIC_MAILER_FROM_EMAIL

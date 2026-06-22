@@ -55,30 +55,41 @@ spec:
               source /vault/secrets/config
               export POSTGRES_HOST=nextcloud-postgres
               export NEXTCLOUD_TRUSTED_DOMAINS="{{ .Values.nextcloud.trustedDomains }}"
-              exec /entrypoint.sh apache2-foreground
+              /entrypoint.sh apache2-foreground &
+              sleep 30
+              php /var/www/html/occ config:system:set overwritewebroot --value="/nextcloud" 2>/dev/null || true
+              php /var/www/html/occ config:system:set overwrite.cli.url --value="https://maha.nav.ovh/nextcloud" 2>/dev/null || true
+              php /var/www/html/occ config:system:set overwriteprotocol --value="https" 2>/dev/null || true
+              wait
           ports:
             - containerPort: 80
               name: http
           startupProbe:
-            httpGet:
-              path: /status.php
-              port: 80
+            exec:
+              command:
+              - php
+              - /var/www/html/occ
+              - status
             initialDelaySeconds: {{ .Values.nextcloud.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.nextcloud.startupProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.nextcloud.startupProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.nextcloud.startupProbe.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /status.php
-              port: 80
-            initialDelaySeconds: {{ .Values.nextcloud.readinessProbe.initialDelaySeconds }}
+            exec:
+              command:
+              - php
+              - /var/www/html/occ
+              - status
             periodSeconds: {{ .Values.nextcloud.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.nextcloud.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.nextcloud.readinessProbe.failureThreshold }}
           livenessProbe:
-            httpGet:
-              path: /status.php
-              port: 80
+            exec:
+              command:
+              - php
+              - /var/www/html/occ
+              - status
             initialDelaySeconds: {{ .Values.nextcloud.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.nextcloud.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.nextcloud.livenessProbe.timeoutSeconds }}

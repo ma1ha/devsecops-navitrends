@@ -69,12 +69,6 @@ spec:
             - -c
             - |
               source /vault/secrets/config
-              export MAUTIC_DB_NAME=$MAUTIC_DB_NAME
-              export MAUTIC_DB_USER=$MAUTIC_DB_USER
-              export MAUTIC_DB_PASSWORD=$MAUTIC_DB_PASSWORD
-              export MAUTIC_ADMIN_EMAIL=$MAUTIC_ADMIN_EMAIL
-              export MAUTIC_ADMIN_USERNAME=$MAUTIC_ADMIN_USERNAME
-              export MAUTIC_ADMIN_PASSWORD=$MAUTIC_ADMIN_PASSWORD
               exec /entrypoint.sh
           securityContext:
             allowPrivilegeEscalation: false
@@ -82,6 +76,8 @@ spec:
             capabilities:
               drop:
                 - ALL
+              add:
+                - DAC_OVERRIDE
           resources:
             requests:
               memory: {{ .Values.mautic.resources.requests.memory | quote }}

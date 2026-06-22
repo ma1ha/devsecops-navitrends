@@ -451,7 +451,7 @@ print(ok[-1] if ok else 0)
                     def services = [
                         [name: 'odoo',      namespace: 'odoo',      svc: 'odoo',           port: '8069', path: '/web/health'],
                         [name: 'n8n',       namespace: 'n8n',       svc: 'n8n',            port: '5678', path: '/healthz'],
-                        [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud',       port: '80',   path: '/status.php'],
+                        [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud', port: '80', path: '/index.php/login'],
                         [name: 'mautic',    namespace: 'mautic',    svc: 'mautic',          port: '80',   path: '/'],
                         [name: 'wordpress', namespace: 'wordpress', svc: 'wordpress',       port: '80',   path: '/'],
                         [name: 'frappe',    namespace: 'frappe',    svc: 'frappe-gunicorn', port: '8000', path: '/api/method/ping']
@@ -562,7 +562,7 @@ except:
             }
         }
 
-       stage('DAST - OWASP ZAP') {
+     stage('DAST - OWASP ZAP') {
     steps {
         script {
             def targets = [
@@ -574,19 +574,53 @@ except:
                 [name: 'erpnext',   path: '/erpnext']
             ]
             def zapFailed = []
+            def externalHost = 'maha.nav.ovh'
+            def internalBase = 'https://127.0.0.1'
+
             targets.each { svc ->
+        
+                def healthCheck = sh(
+                    script: "curl -sk -o /dev/null -w '%{http_code}' -H 'Host: ${externalHost}' ${internalBase}${svc.path}",
+                    returnStdout: true
+                ).trim()
+
+                if (!(healthCheck ==~ /2\d\d|3\d\d/)) {
+                    echo "${svc.name} unreachable before ZAP scan (HTTP ${healthCheck}) - flagging, skipping scan"
+                    zapFailed << "${svc.name}(UNREACHABLE:${healthCheck})"
+                    return
+                }
+
                 echo "ZAP scanning ${svc.name}..."
-                sh """
-                    docker run --rm -u 0 \
-                        -v ${REPORT_DIR}:/zap/wrk \
-                        ghcr.io/zaproxy/zaproxy:stable \
-                        zap-baseline.py \
-                            -t ${TRAEFIK_EXT}${svc.path} \
-                            -r zap-${svc.name}-${BUILD_NUMBER}.html \
-                            -J zap-${svc.name}-${BUILD_NUMBER}.json \
-                            -l WARN \
-                            -I  || true
-                """
+                def zapOutput = sh(
+                    script: """
+                        docker run --rm -u 0 \
+                            --network host \
+                            -v ${REPORT_DIR}:/zap/wrk \
+                            ghcr.io/zaproxy/zaproxy:stable \
+                            zap-baseline.py \
+                                -t ${internalBase}${svc.path} \
+                                -r zap-${svc.name}-${BUILD_NUMBER}.html \
+                                -J zap-${svc.name}-${BUILD_NUMBER}.json \
+                                -l WARN \
+                                -I \
+                                -z "-config replacer.full_list(0).description=hostheader -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Host -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=${externalHost}" \
+                        || true
+                    """,
+                    returnStdout: true
+                )
+                echo zapOutput
+
+                def passCount = 0
+                def m = (zapOutput =~ /PASS:\s*(\d+)/)
+                if (m.find()) {
+                    passCount = m.group(1).toInteger()
+                }
+                if (passCount < 10) {
+                    echo "${svc.name} suspiciously low PASS count (${passCount}) - scan may not have run correctly"
+                    zapFailed << "${svc.name}(SUSPECT_SCAN:PASS=${passCount})"
+                    return
+                }
+
                 def highAlerts = sh(
                     script: """
                         python3 -c "
@@ -613,13 +647,13 @@ except:
                     zapFailed << "${svc.name}(${highAlerts} HIGH)"
                 }
             }
+
             if (zapFailed) {
-                unstable("ZAP HIGH alerts: ${zapFailed.join(', ')}")
+                unstable("ZAP issues: ${zapFailed.join(', ')}")
             }
         }
     }
-}
-        
+} 
 
     }
 
