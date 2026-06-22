@@ -63,7 +63,7 @@ spec:
               exec n8n start
           env:
             - name: N8N_PROTOCOL
-              value: "http"
+              value: "https"
             - name: N8N_HOST
               value: {{ .Values.n8n.host | quote }}
             - name: N8N_PORT
