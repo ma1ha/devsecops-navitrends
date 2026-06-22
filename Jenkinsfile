@@ -575,7 +575,7 @@ except:
             ]
             def zapFailed = []
             def externalHost = 'maha.nav.ovh'
-            def internalBase = 'https://127.0.0.1'
+            def internalBase = 'https://127.0.0.1:30442'
 
             targets.each { svc ->
         
@@ -598,12 +598,20 @@ except:
                             -v ${REPORT_DIR}:/zap/wrk \
                             ghcr.io/zaproxy/zaproxy:stable \
                             zap-baseline.py \
-                                -t ${internalBase}${svc.path} \
-                                -r zap-${svc.name}-${BUILD_NUMBER}.html \
-                                -J zap-${svc.name}-${BUILD_NUMBER}.json \
-                                -l WARN \
-                                -I \
-                                -z "-config replacer.full_list(0).description=hostheader -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Host -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=${externalHost}" \
+    -t ${internalBase}${svc.path} \
+    -r zap-${svc.name}-${BUILD_NUMBER}.html \
+    -J zap-${svc.name}-${BUILD_NUMBER}.json \
+    -l WARN \
+    -I \
+    -m 5 \
+    -z "-config spider.maxDepth=10 \
+        -config spider.maxDuration=3 \
+        -config replacer.full_list(0).description=hostheader \
+        -config replacer.full_list(0).enabled=true \
+        -config replacer.full_list(0).matchtype=REQ_HEADER \
+        -config replacer.full_list(0).matchstr=Host \
+        -config replacer.full_list(0).regex=false \
+        -config replacer.full_list(0).replacement=${externalHost}" \
                         || true
                     """,
                     returnStdout: true
