@@ -35,6 +35,15 @@ spec:
         runAsNonRoot: false
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: fix-media-permissions
+          image: busybox
+          command: ["sh", "-c", "chmod -R 755 /var/www/html/docroot/media/"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: mautic-media
+              mountPath: /var/www/html/docroot/media
       containers:
         - name: mautic
           image: {{ .Values.mautic.image.repository }}:{{ .Values.mautic.image.tag }}
@@ -78,6 +87,7 @@ spec:
                 - ALL
               add:
                 - DAC_OVERRIDE
+                - FOWNER
           resources:
             requests:
               memory: {{ .Values.mautic.resources.requests.memory | quote }}
