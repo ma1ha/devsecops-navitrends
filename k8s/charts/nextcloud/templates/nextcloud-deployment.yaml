@@ -75,7 +75,6 @@ spec:
             timeoutSeconds: {{ .Values.nextcloud.startupProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.nextcloud.startupProbe.failureThreshold }}
           readinessProbe:
-            httpGet:
             exec:
               command:
               - php
