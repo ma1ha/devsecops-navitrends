@@ -62,3 +62,6 @@ volumes:
     secretName: crowdsec-bouncer-secret
     mountPath: "/etc/crowdsec"
     type: secret
+
+additionalArguments:
+  - "--entrypoints.websecure.forwardedHeaders.trustedIPs=10.0.0.0/8,127.0.0.1/32,172.16.0.0/12"
