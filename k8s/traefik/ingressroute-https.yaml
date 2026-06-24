@@ -102,6 +102,15 @@ spec:
         - name: frappe
           namespace: frappe
           port: 8080
+    - match: Host(`maha.nav.ovh`)
+      kind: Rule
+      priority: 1
+      middlewares:
+        - name: security-headers
+          namespace: traefik
+      services:
+        - kind: TraefikService
+          name: noop@internal
   tls:
     secretName: maha-nav-ovh-tls
 

@@ -451,7 +451,7 @@ print(ok[-1] if ok else 0)
             def services = [
                 [name: 'odoo',      namespace: 'odoo',      svc: 'odoo',           port: '8069', path: '/web/health',        label: 'odoo'],
                 [name: 'n8n',       namespace: 'n8n',       svc: 'n8n',            port: '5678', path: '/healthz',            label: 'n8n'],
-                [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud',      port: '80',   path: '/',                   label: 'nextcloud'],
+                [name: 'nextcloud', namespace: 'nextcloud', svc: 'nextcloud', port: '80', path: '/status.php', host: 'maha.nav.ovh', label: 'nextcloud'],
                 [name: 'mautic',    namespace: 'mautic',    svc: 'mautic',         port: '80',   path: '/',                   label: 'mautic'],
                 [name: 'wordpress', namespace: 'wordpress', svc: 'wordpress',      port: '80',   path: '/',                   label: 'wordpress'],
                 [name: 'frappe',    namespace: 'frappe',    svc: 'frappe-gunicorn',port: '8000', path: '/api/method/ping',    label: 'frappe']
@@ -474,8 +474,8 @@ print(ok[-1] if ok else 0)
                                 --retry 3 \
                                 --retry-delay 5 \
                                 --max-redirs 3 \
-                                http://${svc.svc}.${svc.namespace}.svc.cluster.local:${svc.port}${svc.path} \
-                        2>/dev/null || echo "000"
+                                ${svc.host ? "-H 'Host: ${svc.host}'" : ''} \
+                                http://${svc.svc}.${svc.namespace}.svc.cluster.local:${svc.port}${svc.path} 2>/dev/null || echo "000"
                     """,
                     returnStdout: true
                 ).trim()
@@ -577,7 +577,7 @@ except:
             ]
             def zapFailed = []
             def externalHost = 'maha.nav.ovh'
-            def internalBase = 'https://127.0.0.1:30442'
+            def internalBase = 'https://10.0.1.20'
 
             targets.each { svc ->
         

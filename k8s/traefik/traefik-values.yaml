@@ -65,3 +65,4 @@ volumes:
 
 additionalArguments:
   - "--entrypoints.websecure.forwardedHeaders.trustedIPs=10.0.0.0/8,127.0.0.1/32,172.16.0.0/12"
+  - "--entrypoints.websecure.http.middlewares=traefik-security-headers@kubernetescrd"
