@@ -620,11 +620,8 @@ except:
                 )
                 echo zapOutput
 
-                def passCount = 0
                 def m = (zapOutput =~ /PASS:\s*(\d+)/)
-                if (m.find()) {
-                    passCount = m.group(1).toInteger()
-                }
+                def passCount = m ? m[0][1].toInteger() : 0
                 if (passCount < 10) {
                     echo "${svc.name} suspiciously low PASS count (${passCount}) - scan may not have run correctly"
                     zapFailed << "${svc.name}(SUSPECT_SCAN:PASS=${passCount})"
